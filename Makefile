@@ -4,17 +4,34 @@
 #   onexn_owner  owns the schema, runs migrations
 #   onexn_app    what the API uses; Row-Level Security applies to it
 
-MIGRATE_DATABASE_URL ?= postgres://onexn_owner:dev@localhost:5432/onexn?sslmode=disable
-DATABASE_URL         ?= postgres://onexn_app:dev@localhost:5432/onexn?sslmode=disable
-TEST_DATABASE_URL    ?= postgres://onexn_owner:dev@localhost:5432/postgres?sslmode=disable
-CORE := services/core
+#
+# Postgres listens on host port 5433, not the default 5432, so it never fights
+# with another Postgres already on your Mac. Use another port with, for example:
+#   export DB_PORT=5434      (then every make command uses it)
 
-.PHONY: help up down reset migrate run demo test test-unit golden fuzz fmt vet check
+DB_PORT              ?= 5433
+MIGRATE_DATABASE_URL ?= postgres://onexn_owner:dev@localhost:$(DB_PORT)/onexn?sslmode=disable
+DATABASE_URL         ?= postgres://onexn_app:dev@localhost:$(DB_PORT)/onexn?sslmode=disable
+TEST_DATABASE_URL    ?= postgres://onexn_owner:dev@localhost:$(DB_PORT)/postgres?sslmode=disable
+CORE := services/core
+export ONEXN_DB_PORT := $(DB_PORT)
+
+.PHONY: help doctor up down reset migrate run demo test test-unit golden fuzz fmt vet check
 
 help: ## list commands
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
 
-up: ## start Postgres in Docker and wait until it is healthy
+doctor: ## check your tools, Docker and the database port
+	@for t in go docker python3 git; do \
+	  if command -v $$t >/dev/null; then echo "ok       $$t"; else echo "MISSING  $$t (see README: Run it on your Mac)"; fi; done
+	@if docker info >/dev/null 2>&1; then echo "ok       Docker is running"; \
+	  else echo "PROBLEM  Docker is installed but not running: open Docker Desktop"; fi
+	@if ! lsof -nP -iTCP:$(DB_PORT) -sTCP:LISTEN >/dev/null 2>&1; then echo "ok       port $(DB_PORT) is free"; \
+	  elif docker compose ps --status running 2>/dev/null | grep -q postgres; then echo "ok       port $(DB_PORT) is our Postgres"; \
+	  else echo "PROBLEM  port $(DB_PORT) is taken by:"; lsof -nP -iTCP:$(DB_PORT) -sTCP:LISTEN; \
+	       echo "         pick another port: export DB_PORT=5434"; fi
+
+up: ## start Postgres in Docker (port 5433, or DB_PORT) and wait until healthy
 	docker compose up -d --wait
 
 down: ## stop Postgres (data is kept in a Docker volume)

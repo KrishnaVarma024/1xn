@@ -32,19 +32,23 @@ brew install --cask docker                 # Docker Desktop; open it once so it 
 Then, in this folder:
 
 ```bash
-make up        # Postgres 16 in Docker
+make doctor    # checks go, docker, python3, git and that port 5433 is free
+make up        # Postgres 16 in Docker, on port 5433
 make test      # every test, including end-to-end against that Postgres
 make run       # migrate, then start the API on :8080  (leave running)
 make demo      # in a second terminal: the P0 exit gate, narrated
 ```
 
-No Docker? Use Homebrew's Postgres instead:
+**"port is already allocated"?** Something else on your Mac already uses that port (often another Postgres). This repo uses 5433 so that is rare; if it happens, `make doctor` shows who owns the port, and `export DB_PORT=5434` moves ours.
+
+No Docker? Use Homebrew's Postgres instead (it listens on 5432):
 
 ```bash
 brew install postgresql@16 && brew services start postgresql@16
 psql postgres -c "CREATE ROLE onexn_owner LOGIN SUPERUSER PASSWORD 'dev'"
 psql postgres -c "CREATE DATABASE onexn OWNER onexn_owner"
 psql -U onexn_owner onexn -f infra/local/init.sql
+export DB_PORT=5432   # then make test / make run as usual (skip make up)
 ```
 
 `make help` lists every command. The URLs are in `.env.example`.

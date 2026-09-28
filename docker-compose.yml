@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: dev
       POSTGRES_DB: onexn
     ports:
-      - "5432:5432"
+      # Host port 5433 by default (make sets ONEXN_DB_PORT from DB_PORT), so
+      # an existing Postgres on 5432 is never a conflict.
+      - "${ONEXN_DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/local/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
