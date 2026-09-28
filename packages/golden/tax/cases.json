@@ -1,0 +1,1430 @@
+{
+  "version": 1,
+  "about": "Hand-written golden cases for the pricing and GST engine. Every platform (Go server, Dart device, Python oracle) must reproduce each 'expected' exactly. Amounts are paise. Rules: docs/learn/01-money-and-gst-engine.md. Before pilot, a chartered accountant signs off these cases and the 500-bill set that grows from them.",
+  "cases": [
+    {
+      "name": "single-item-exclusive-5pct",
+      "why": "Dal makhani Rs 100, prices exclusive of GST: 2.50 CGST + 2.50 SGST on top.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "dal",
+            "name": "Dal makhani",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "dal",
+              "gross": 10000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 10000
+            }
+          ],
+          "subtotal": 10000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 10000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 10000,
+              "goods_value": 10000,
+              "service_charge": 0,
+              "taxable": 10000,
+              "cgst": 250,
+              "sgst": 250,
+              "igst": 0
+            }
+          ],
+          "cgst": 250,
+          "sgst": 250,
+          "igst": 0,
+          "tax_total": 500,
+          "round_off": 0,
+          "grand_total": 10500
+        }
+      }
+    },
+    {
+      "name": "inclusive-menu-price-preserved",
+      "why": "Cold coffee Rs 99 with GST inside the price. The guest must pay exactly Rs 99; GST is backed out and goods value absorbs the rounding.",
+      "input": {
+        "price_mode": "inclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "cc",
+            "name": "Cold coffee",
+            "qty": 1,
+            "unit_price_paise": 9900,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "cc",
+              "gross": 9900,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 9900
+            }
+          ],
+          "subtotal": 9900,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 9428,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 9900,
+              "goods_value": 9428,
+              "service_charge": 0,
+              "taxable": 9428,
+              "cgst": 236,
+              "sgst": 236,
+              "igst": 0
+            }
+          ],
+          "cgst": 236,
+          "sgst": 236,
+          "igst": 0,
+          "tax_total": 472,
+          "round_off": 0,
+          "grand_total": 9900
+        }
+      }
+    },
+    {
+      "name": "halves-rounded-separately-then-round-off-up",
+      "why": "Rs 95 at 5%: CGST 2.375 and SGST 2.375 each round to 2.38, so tax is 4.76, not 4.75. Total 99.76 rounds up by 24 paise.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "pb",
+            "name": "Pav bhaji",
+            "qty": 1,
+            "unit_price_paise": 9500,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "pb",
+              "gross": 9500,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 9500
+            }
+          ],
+          "subtotal": 9500,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 9500,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 9500,
+              "goods_value": 9500,
+              "service_charge": 0,
+              "taxable": 9500,
+              "cgst": 238,
+              "sgst": 238,
+              "igst": 0
+            }
+          ],
+          "cgst": 238,
+          "sgst": 238,
+          "igst": 0,
+          "tax_total": 476,
+          "round_off": 24,
+          "grand_total": 10000
+        }
+      }
+    },
+    {
+      "name": "round-off-down",
+      "why": "Rs 109 at 5%: halves 2.725 round to 2.73 each; 114.46 rounds down by 46 paise.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "vp",
+            "name": "Veg pulao",
+            "qty": 1,
+            "unit_price_paise": 10900,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "vp",
+              "gross": 10900,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 10900
+            }
+          ],
+          "subtotal": 10900,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 10900,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 10900,
+              "goods_value": 10900,
+              "service_charge": 0,
+              "taxable": 10900,
+              "cgst": 273,
+              "sgst": 273,
+              "igst": 0
+            }
+          ],
+          "cgst": 273,
+          "sgst": 273,
+          "igst": 0,
+          "tax_total": 546,
+          "round_off": -46,
+          "grand_total": 11400
+        }
+      }
+    },
+    {
+      "name": "exactly-50-paise-rounds-up",
+      "why": "Rs 10 at 5% gives 10.50; 50 paise rounds up to Rs 11.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "tea",
+            "name": "Cutting chai",
+            "qty": 1,
+            "unit_price_paise": 1000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "tea",
+              "gross": 1000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 1000
+            }
+          ],
+          "subtotal": 1000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 1000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 1000,
+              "goods_value": 1000,
+              "service_charge": 0,
+              "taxable": 1000,
+              "cgst": 25,
+              "sgst": 25,
+              "igst": 0
+            }
+          ],
+          "cgst": 25,
+          "sgst": 25,
+          "igst": 0,
+          "tax_total": 50,
+          "round_off": 50,
+          "grand_total": 1100
+        }
+      }
+    },
+    {
+      "name": "qty-and-modifiers",
+      "why": "Pizza Rs 280 plus extra cheese Rs 40, two of them: modifiers are priced into the unit and taxed at the line's rate.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "pz",
+            "name": "Paneer tikka pizza",
+            "qty": 2,
+            "unit_price_paise": 28000,
+            "tax_rate_bp": 500,
+            "modifiers": [
+              {
+                "name": "Extra cheese",
+                "price_paise": 4000
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "pz",
+              "gross": 64000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 64000
+            }
+          ],
+          "subtotal": 64000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 64000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 64000,
+              "goods_value": 64000,
+              "service_charge": 0,
+              "taxable": 64000,
+              "cgst": 1600,
+              "sgst": 1600,
+              "igst": 0
+            }
+          ],
+          "cgst": 1600,
+          "sgst": 1600,
+          "igst": 0,
+          "tax_total": 3200,
+          "round_off": 0,
+          "grand_total": 67200
+        }
+      }
+    },
+    {
+      "name": "mixed-rates",
+      "why": "A 5% food line and an 18% merchandise line: tax is computed once per rate group.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "thali",
+            "name": "Veg thali",
+            "qty": 2,
+            "unit_price_paise": 25000,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "mug",
+            "name": "Branded mug",
+            "qty": 1,
+            "unit_price_paise": 39900,
+            "tax_rate_bp": 1800
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "thali",
+              "gross": 50000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 50000
+            },
+            {
+              "ref": "mug",
+              "gross": 39900,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 39900
+            }
+          ],
+          "subtotal": 89900,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 89900,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 50000,
+              "goods_value": 50000,
+              "service_charge": 0,
+              "taxable": 50000,
+              "cgst": 1250,
+              "sgst": 1250,
+              "igst": 0
+            },
+            {
+              "rate_bp": 1800,
+              "net": 39900,
+              "goods_value": 39900,
+              "service_charge": 0,
+              "taxable": 39900,
+              "cgst": 3591,
+              "sgst": 3591,
+              "igst": 0
+            }
+          ],
+          "cgst": 4841,
+          "sgst": 4841,
+          "igst": 0,
+          "tax_total": 9682,
+          "round_off": 18,
+          "grand_total": 99600
+        }
+      }
+    },
+    {
+      "name": "line-percent-discount",
+      "why": "10% off the biryani only; the raita is untouched.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "bir",
+            "name": "Chicken biryani",
+            "qty": 1,
+            "unit_price_paise": 32000,
+            "tax_rate_bp": 500,
+            "discount": {
+              "percent_bp": 1000
+            }
+          },
+          {
+            "ref": "rai",
+            "name": "Raita",
+            "qty": 1,
+            "unit_price_paise": 6000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "bir",
+              "gross": 32000,
+              "line_discount": 3200,
+              "bill_discount": 0,
+              "net": 28800
+            },
+            {
+              "ref": "rai",
+              "gross": 6000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 6000
+            }
+          ],
+          "subtotal": 38000,
+          "discount_total": 3200,
+          "service_charge": 0,
+          "taxable_total": 34800,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 34800,
+              "goods_value": 34800,
+              "service_charge": 0,
+              "taxable": 34800,
+              "cgst": 870,
+              "sgst": 870,
+              "igst": 0
+            }
+          ],
+          "cgst": 870,
+          "sgst": 870,
+          "igst": 0,
+          "tax_total": 1740,
+          "round_off": -40,
+          "grand_total": 36500
+        }
+      }
+    },
+    {
+      "name": "bill-amount-discount-remainder",
+      "why": "Rs 10 off three Rs 100 lines: 333.33 paise each is impossible, so largest remainder gives 334/333/333 (tie goes to the first line).",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Idli",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "b",
+            "name": "Vada",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "c",
+            "name": "Dosa",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "amount_paise": 1000
+        }
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "a",
+              "gross": 10000,
+              "line_discount": 0,
+              "bill_discount": 334,
+              "net": 9666
+            },
+            {
+              "ref": "b",
+              "gross": 10000,
+              "line_discount": 0,
+              "bill_discount": 333,
+              "net": 9667
+            },
+            {
+              "ref": "c",
+              "gross": 10000,
+              "line_discount": 0,
+              "bill_discount": 333,
+              "net": 9667
+            }
+          ],
+          "subtotal": 30000,
+          "discount_total": 1000,
+          "service_charge": 0,
+          "taxable_total": 29000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 29000,
+              "goods_value": 29000,
+              "service_charge": 0,
+              "taxable": 29000,
+              "cgst": 725,
+              "sgst": 725,
+              "igst": 0
+            }
+          ],
+          "cgst": 725,
+          "sgst": 725,
+          "igst": 0,
+          "tax_total": 1450,
+          "round_off": 50,
+          "grand_total": 30500
+        }
+      }
+    },
+    {
+      "name": "bill-percent-discount",
+      "why": "10% off the whole bill, shared across lines in proportion to their value.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Butter chicken",
+            "qty": 1,
+            "unit_price_paise": 45000,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "b",
+            "name": "Garlic naan",
+            "qty": 1,
+            "unit_price_paise": 19900,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "percent_bp": 1000
+        }
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "a",
+              "gross": 45000,
+              "line_discount": 0,
+              "bill_discount": 4500,
+              "net": 40500
+            },
+            {
+              "ref": "b",
+              "gross": 19900,
+              "line_discount": 0,
+              "bill_discount": 1990,
+              "net": 17910
+            }
+          ],
+          "subtotal": 64900,
+          "discount_total": 6490,
+          "service_charge": 0,
+          "taxable_total": 58410,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 58410,
+              "goods_value": 58410,
+              "service_charge": 0,
+              "taxable": 58410,
+              "cgst": 1460,
+              "sgst": 1460,
+              "igst": 0
+            }
+          ],
+          "cgst": 1460,
+          "sgst": 1460,
+          "igst": 0,
+          "tax_total": 2920,
+          "round_off": -30,
+          "grand_total": 61300
+        }
+      }
+    },
+    {
+      "name": "service-charge-exclusive",
+      "why": "Guest agreed to a 10% service charge. It is part of the taxable value, so GST applies to it too.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Tasting menu",
+            "qty": 1,
+            "unit_price_paise": 120000,
+            "tax_rate_bp": 500
+          }
+        ],
+        "service_charge_bp": 1000
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "a",
+              "gross": 120000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 120000
+            }
+          ],
+          "subtotal": 120000,
+          "discount_total": 0,
+          "service_charge": 12000,
+          "taxable_total": 132000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 120000,
+              "goods_value": 120000,
+              "service_charge": 12000,
+              "taxable": 132000,
+              "cgst": 3300,
+              "sgst": 3300,
+              "igst": 0
+            }
+          ],
+          "cgst": 3300,
+          "sgst": 3300,
+          "igst": 0,
+          "tax_total": 6600,
+          "round_off": 0,
+          "grand_total": 138600
+        }
+      }
+    },
+    {
+      "name": "service-charge-inclusive",
+      "why": "Inclusive price plus an agreed 10% service charge: goods tax stays inside the Rs 99, service charge is taxed on top.",
+      "input": {
+        "price_mode": "inclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "cc",
+            "name": "Cold coffee",
+            "qty": 1,
+            "unit_price_paise": 9900,
+            "tax_rate_bp": 500
+          }
+        ],
+        "service_charge_bp": 1000
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "cc",
+              "gross": 9900,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 9900
+            }
+          ],
+          "subtotal": 9900,
+          "discount_total": 0,
+          "service_charge": 943,
+          "taxable_total": 10371,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 9900,
+              "goods_value": 9428,
+              "service_charge": 943,
+              "taxable": 10371,
+              "cgst": 260,
+              "sgst": 260,
+              "igst": 0
+            }
+          ],
+          "cgst": 260,
+          "sgst": 260,
+          "igst": 0,
+          "tax_total": 520,
+          "round_off": 9,
+          "grand_total": 10900
+        }
+      }
+    },
+    {
+      "name": "inter-state-igst-exclusive",
+      "why": "Inter-state supply (for example outdoor catering billed across a state line): one IGST line instead of CGST+SGST.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "inter",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "cat",
+            "name": "Catering package",
+            "qty": 1,
+            "unit_price_paise": 500000,
+            "tax_rate_bp": 1800
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "cat",
+              "gross": 500000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 500000
+            }
+          ],
+          "subtotal": 500000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 500000,
+          "tax_groups": [
+            {
+              "rate_bp": 1800,
+              "net": 500000,
+              "goods_value": 500000,
+              "service_charge": 0,
+              "taxable": 500000,
+              "cgst": 0,
+              "sgst": 0,
+              "igst": 90000
+            }
+          ],
+          "cgst": 0,
+          "sgst": 0,
+          "igst": 90000,
+          "tax_total": 90000,
+          "round_off": 0,
+          "grand_total": 590000
+        }
+      }
+    },
+    {
+      "name": "inter-state-igst-inclusive",
+      "why": "Inclusive price, inter-state: IGST is backed out and the total stays Rs 99.",
+      "input": {
+        "price_mode": "inclusive",
+        "supply": "inter",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "cc",
+            "name": "Cold coffee",
+            "qty": 1,
+            "unit_price_paise": 9900,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "cc",
+              "gross": 9900,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 9900
+            }
+          ],
+          "subtotal": 9900,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 9429,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 9900,
+              "goods_value": 9429,
+              "service_charge": 0,
+              "taxable": 9429,
+              "cgst": 0,
+              "sgst": 0,
+              "igst": 471
+            }
+          ],
+          "cgst": 0,
+          "sgst": 0,
+          "igst": 471,
+          "tax_total": 471,
+          "round_off": 0,
+          "grand_total": 9900
+        }
+      }
+    },
+    {
+      "name": "zero-rate-line",
+      "why": "A 0% line sits in its own group with no tax.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "fr",
+            "name": "Fresh fruit bowl",
+            "qty": 1,
+            "unit_price_paise": 8000,
+            "tax_rate_bp": 0
+          },
+          {
+            "ref": "sw",
+            "name": "Club sandwich",
+            "qty": 1,
+            "unit_price_paise": 12000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "fr",
+              "gross": 8000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 8000
+            },
+            {
+              "ref": "sw",
+              "gross": 12000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 12000
+            }
+          ],
+          "subtotal": 20000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 20000,
+          "tax_groups": [
+            {
+              "rate_bp": 0,
+              "net": 8000,
+              "goods_value": 8000,
+              "service_charge": 0,
+              "taxable": 8000,
+              "cgst": 0,
+              "sgst": 0,
+              "igst": 0
+            },
+            {
+              "rate_bp": 500,
+              "net": 12000,
+              "goods_value": 12000,
+              "service_charge": 0,
+              "taxable": 12000,
+              "cgst": 300,
+              "sgst": 300,
+              "igst": 0
+            }
+          ],
+          "cgst": 300,
+          "sgst": 300,
+          "igst": 0,
+          "tax_total": 600,
+          "round_off": 0,
+          "grand_total": 20600
+        }
+      }
+    },
+    {
+      "name": "tie-break-lower-index",
+      "why": "One paisa of discount across two equal lines: remainders tie, so the first line takes it. Every platform must break ties the same way.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Mint",
+            "qty": 1,
+            "unit_price_paise": 100,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "b",
+            "name": "Saunf",
+            "qty": 1,
+            "unit_price_paise": 100,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "amount_paise": 1
+        }
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "a",
+              "gross": 100,
+              "line_discount": 0,
+              "bill_discount": 1,
+              "net": 99
+            },
+            {
+              "ref": "b",
+              "gross": 100,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 100
+            }
+          ],
+          "subtotal": 200,
+          "discount_total": 1,
+          "service_charge": 0,
+          "taxable_total": 199,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 199,
+              "goods_value": 199,
+              "service_charge": 0,
+              "taxable": 199,
+              "cgst": 5,
+              "sgst": 5,
+              "igst": 0
+            }
+          ],
+          "cgst": 5,
+          "sgst": 5,
+          "igst": 0,
+          "tax_total": 10,
+          "round_off": -9,
+          "grand_total": 200
+        }
+      }
+    },
+    {
+      "name": "bulk-order",
+      "why": "150 samosas at Rs 15: 2362.50 rounds up to 2363.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "sam",
+            "name": "Samosa",
+            "qty": 150,
+            "unit_price_paise": 1500,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "sam",
+              "gross": 225000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 225000
+            }
+          ],
+          "subtotal": 225000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 225000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 225000,
+              "goods_value": 225000,
+              "service_charge": 0,
+              "taxable": 225000,
+              "cgst": 5625,
+              "sgst": 5625,
+              "igst": 0
+            }
+          ],
+          "cgst": 5625,
+          "sgst": 5625,
+          "igst": 0,
+          "tax_total": 11250,
+          "round_off": 50,
+          "grand_total": 236300
+        }
+      }
+    },
+    {
+      "name": "no-rounding",
+      "why": "Same as the Rs 95 case with rounding off: the bill keeps its paise.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "none",
+        "lines": [
+          {
+            "ref": "pb",
+            "name": "Pav bhaji",
+            "qty": 1,
+            "unit_price_paise": 9500,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "pb",
+              "gross": 9500,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 9500
+            }
+          ],
+          "subtotal": 9500,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 9500,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 9500,
+              "goods_value": 9500,
+              "service_charge": 0,
+              "taxable": 9500,
+              "cgst": 238,
+              "sgst": 238,
+              "igst": 0
+            }
+          ],
+          "cgst": 238,
+          "sgst": 238,
+          "igst": 0,
+          "tax_total": 476,
+          "round_off": 0,
+          "grand_total": 9976
+        }
+      }
+    },
+    {
+      "name": "inclusive-with-bill-discount",
+      "why": "QSR combo, inclusive prices, 20% off the bill: discount first, then GST is backed out of what is left.",
+      "input": {
+        "price_mode": "inclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "cb",
+            "name": "Burger combo",
+            "qty": 1,
+            "unit_price_paise": 34900,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "fr",
+            "name": "Fries",
+            "qty": 1,
+            "unit_price_paise": 12900,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "percent_bp": 2000
+        }
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "cb",
+              "gross": 34900,
+              "line_discount": 0,
+              "bill_discount": 6980,
+              "net": 27920
+            },
+            {
+              "ref": "fr",
+              "gross": 12900,
+              "line_discount": 0,
+              "bill_discount": 2580,
+              "net": 10320
+            }
+          ],
+          "subtotal": 47800,
+          "discount_total": 9560,
+          "service_charge": 0,
+          "taxable_total": 36420,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 38240,
+              "goods_value": 36420,
+              "service_charge": 0,
+              "taxable": 36420,
+              "cgst": 910,
+              "sgst": 910,
+              "igst": 0
+            }
+          ],
+          "cgst": 910,
+          "sgst": 910,
+          "igst": 0,
+          "tax_total": 1820,
+          "round_off": -40,
+          "grand_total": 38200
+        }
+      }
+    },
+    {
+      "name": "full-comp",
+      "why": "Manager comps the whole bill (100% off): everything is zero and nothing breaks.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Paneer butter masala",
+            "qty": 1,
+            "unit_price_paise": 28000,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "b",
+            "name": "Jeera rice",
+            "qty": 1,
+            "unit_price_paise": 18000,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "percent_bp": 10000
+        }
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "a",
+              "gross": 28000,
+              "line_discount": 0,
+              "bill_discount": 28000,
+              "net": 0
+            },
+            {
+              "ref": "b",
+              "gross": 18000,
+              "line_discount": 0,
+              "bill_discount": 18000,
+              "net": 0
+            }
+          ],
+          "subtotal": 46000,
+          "discount_total": 46000,
+          "service_charge": 0,
+          "taxable_total": 0,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 0,
+              "goods_value": 0,
+              "service_charge": 0,
+              "taxable": 0,
+              "cgst": 0,
+              "sgst": 0,
+              "igst": 0
+            }
+          ],
+          "cgst": 0,
+          "sgst": 0,
+          "igst": 0,
+          "tax_total": 0,
+          "round_off": 0,
+          "grand_total": 0
+        }
+      }
+    },
+    {
+      "name": "zero-price-line",
+      "why": "A free papad on the bill at Rs 0 is allowed and carries no tax.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "pap",
+            "name": "Papad (complimentary)",
+            "qty": 1,
+            "unit_price_paise": 0,
+            "tax_rate_bp": 500
+          },
+          {
+            "ref": "th",
+            "name": "Thali",
+            "qty": 1,
+            "unit_price_paise": 22000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "lines": [
+            {
+              "ref": "pap",
+              "gross": 0,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 0
+            },
+            {
+              "ref": "th",
+              "gross": 22000,
+              "line_discount": 0,
+              "bill_discount": 0,
+              "net": 22000
+            }
+          ],
+          "subtotal": 22000,
+          "discount_total": 0,
+          "service_charge": 0,
+          "taxable_total": 22000,
+          "tax_groups": [
+            {
+              "rate_bp": 500,
+              "net": 22000,
+              "goods_value": 22000,
+              "service_charge": 0,
+              "taxable": 22000,
+              "cgst": 550,
+              "sgst": 550,
+              "igst": 0
+            }
+          ],
+          "cgst": 550,
+          "sgst": 550,
+          "igst": 0,
+          "tax_total": 1100,
+          "round_off": 0,
+          "grand_total": 23100
+        }
+      }
+    },
+    {
+      "name": "error-no-lines",
+      "why": "An empty bill is rejected.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": []
+      },
+      "expected": {
+        "error": "no_lines"
+      }
+    },
+    {
+      "name": "error-both-discount-kinds",
+      "why": "A discount is a percent or an amount, never both.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Item",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "percent_bp": 1000,
+          "amount_paise": 500
+        }
+      },
+      "expected": {
+        "error": "bad_discount"
+      }
+    },
+    {
+      "name": "error-discount-exceeds-amount",
+      "why": "A Rs 150 discount on a Rs 100 bill is rejected, not turned into a negative bill.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Item",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ],
+        "bill_discount": {
+          "amount_paise": 15000
+        }
+      },
+      "expected": {
+        "error": "discount_exceeds_amount"
+      }
+    },
+    {
+      "name": "error-zero-qty",
+      "why": "Quantity must be at least 1; removals are voids, not zero lines.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Item",
+            "qty": 0,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "error": "bad_qty"
+      }
+    },
+    {
+      "name": "error-negative-price",
+      "why": "Negative prices are rejected; refunds are credit notes.",
+      "input": {
+        "price_mode": "exclusive",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Item",
+            "qty": 1,
+            "unit_price_paise": -500,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "error": "bad_price"
+      }
+    },
+    {
+      "name": "error-unknown-price-mode",
+      "why": "An unknown price mode is rejected instead of guessed.",
+      "input": {
+        "price_mode": "gross",
+        "supply": "intra",
+        "rounding": "nearest_rupee",
+        "lines": [
+          {
+            "ref": "a",
+            "name": "Item",
+            "qty": 1,
+            "unit_price_paise": 10000,
+            "tax_rate_bp": 500
+          }
+        ]
+      },
+      "expected": {
+        "error": "bad_price_mode"
+      }
+    }
+  ]
+}
