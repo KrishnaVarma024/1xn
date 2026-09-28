@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: onexn_owner
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: onexn
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U onexn_owner"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://onexn_owner:dev@localhost:5432/postgres?sslmode=disable
+      MIGRATE_DATABASE_URL: postgres://onexn_owner:dev@localhost:5432/onexn?sslmode=disable
+    defaults:
+      run:
+        working-directory: services/core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/core/go.mod
+          cache-dependency-path: services/core/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golden files agree with the Python oracle
+        run: python3 ../../tools/golden/oracle.py check
+
+      - name: tests (unit, golden, property, end-to-end) with the race detector
+        run: go test -race -count=1 ./...
+
+      - name: migrations apply, and re-apply as a no-op
+        run: |
+          go run ./cmd/migrate
+          go run ./cmd/migrate | grep -q "schema is up to date"
+
+      - name: short fuzz run
+        run: go test ./modules/sales/pricing -run XXX -fuzz FuzzCompute -fuzztime 20s

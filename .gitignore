@@ -1,0 +1,26 @@
+# secrets
+.env
+*.pem
+*.key
+
+# build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Go fuzzing finds (commit the interesting ones to testdata on purpose)
+services/core/**/testdata/fuzz/
+
+# editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+
+# handoff folder used to copy builds into this folder
+.sync/
