@@ -14,3 +14,6 @@ One file per decision: what we chose, why, and what it costs. Numbering follows 
 | 0008 | [database/sql with lib/pq for now, pgx later](0008-database-sql-and-lib-pq-for-now.md) |
 | 0009 | [P0 authentication: opaque, hashed bearer tokens](0009-p0-auth-opaque-tokens.md) |
 | 0010 | [Ledger rules are enforced by the database](0010-ledger-rules-live-in-the-database.md) |
+| 0011 | [An open order is one JSONB document, changed by a pure reducer](0011-order-as-a-jsonb-document-with-a-pure-reducer.md) |
+| 0012 | [Sync pull sends current state, by a commit-ordered cursor](0012-state-based-sync-pull.md) |
+| 0013 | [Device facts are recorded and flagged, not refused](0013-device-facts-are-recorded-and-flagged.md) |

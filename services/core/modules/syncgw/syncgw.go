@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 
@@ -263,10 +262,9 @@ func nextSeq(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID) (int64, error)
 	return seq, err
 }
 
-// Routes is mounted at /v1/sync (device).
-func (g *Gateway) Routes() http.Handler {
-	r := chi.NewRouter()
-	r.Post("/push", func(w http.ResponseWriter, r *http.Request) {
+// PushHandler serves POST /v1/sync/push (device).
+func (g *Gateway) PushHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var req PushRequest
 		if err := httpx.DecodeLenient(w, r, MaxBodyBytes, &req); err != nil {
 			httpx.Fail(w, r, err)
@@ -289,6 +287,5 @@ func (g *Gateway) Routes() http.Handler {
 			return
 		}
 		httpx.JSON(w, http.StatusOK, res)
-	})
-	return r
+	}
 }

@@ -3,8 +3,11 @@ package e2e
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"1xn/core/internal/platform/gst"
 	"1xn/core/internal/platform/ids"
@@ -23,6 +26,8 @@ type fixture struct {
 	DeviceToken   string
 	Prefix        string
 	ItemID        string
+	TaxProfileID  string
+	CategoryID    string
 	nextSeq       int64
 	nextInvoice   int
 }
@@ -60,7 +65,7 @@ func newRestaurant(t *testing.T, name, gstin, state string) *fixture {
 		"category_id": cat.ID, "tax_profile_id": tp.ID, "name": "Pav bhaji", "price_paise": 9500,
 		"channel_prices": map[string]int64{"swiggy": 11000},
 	}, &item)
-	f.ItemID = item.ID
+	f.ItemID, f.TaxProfileID, f.CategoryID = item.ID, tp.ID, cat.ID
 
 	var code struct {
 		Code string `json:"code"`
@@ -85,6 +90,8 @@ type billOpts struct {
 	payments  []sales.Payment
 	tamper    func(in *pricing.Input) // change the input AFTER pricing, to fake a device bug
 	billID    string
+	orderID   *uuid.UUID  // link the bill to a table order
+	lineIDs   []uuid.UUID // the order lines billed, aligned with the input lines
 }
 
 // bill prices lines exactly like the device will (same engine, same rules)
@@ -117,6 +124,7 @@ func (f *fixture) bill(t *testing.T, in pricing.Input, o billOpts) syncgw.Op {
 		BillID: o.billID, InvoiceNo: o.invoiceNo, IssuedAt: o.issuedAt,
 		BusinessDate: o.issuedAt.Format(time.DateOnly), Channel: "dine_in", TableLabel: "T4", Covers: 2,
 		Input: inRaw, Totals: totRaw, Payments: o.payments,
+		OrderID: o.orderID, LineIDs: o.lineIDs,
 	})
 	op := syncgw.Op{OpID: ids.New().String(), DeviceSeq: f.nextSeq, Type: sales.OpBillSettled, Payload: payload}
 	f.nextSeq++
@@ -177,4 +185,118 @@ func (f *fixture) alerts(t *testing.T) map[string]int {
 		kinds[a.Kind]++
 	}
 	return kinds
+}
+
+// pair registers another device of the given role for the same outlet. The
+// copy shares the owner and tenant fields, with its own token, series and
+// op sequence.
+func (f *fixture) pair(t *testing.T, role, name string) *fixture {
+	t.Helper()
+	var code struct {
+		Code string `json:"code"`
+	}
+	must(t, http.StatusCreated, "POST", "/v1/outlets/"+f.OutletID+"/pairing-codes", f.OwnerToken,
+		map[string]any{"role": role}, &code)
+	var reg struct {
+		DeviceID      string `json:"device_id"`
+		DeviceToken   string `json:"device_token"`
+		InvoicePrefix string `json:"invoice_prefix"`
+	}
+	must(t, http.StatusCreated, "POST", "/v1/devices/register", "",
+		map[string]any{"pairing_code": code.Code, "name": name}, &reg)
+	d := *f
+	d.DeviceID, d.DeviceToken, d.Prefix, d.nextSeq, d.nextInvoice = reg.DeviceID, reg.DeviceToken, reg.InvoicePrefix, 1, 1
+	return &d
+}
+
+// op wraps a payload as the device's next op.
+func (f *fixture) op(typ string, payload any) syncgw.Op {
+	b, _ := json.Marshal(payload)
+	o := syncgw.Op{OpID: ids.New().String(), DeviceSeq: f.nextSeq, Type: typ, Payload: b}
+	f.nextSeq++
+	return o
+}
+
+// apply pushes ops and insists each one is applied (or a harmless duplicate).
+func (f *fixture) apply(t *testing.T, ops ...syncgw.Op) syncgw.PushResponse {
+	t.Helper()
+	res := f.push(t, ops...)
+	for i, a := range res.Acks {
+		if a.Status != "applied" && a.Status != "duplicate" {
+			t.Fatalf("op %d (%s) not applied: %+v", i, ops[i].Type, a)
+		}
+	}
+	return res
+}
+
+// orderDoc is the order JSON devices pull.
+type orderDoc struct {
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	TableID     *string `json:"table_id"`
+	Covers      int     `json:"covers"`
+	MergedInto  *string `json:"merged_into"`
+	SpilloverOf *string `json:"spillover_of"`
+	Version     int64   `json:"version"`
+	LastSeq     int64   `json:"last_seq"`
+	Lines       []struct {
+		ID          string  `json:"id"`
+		Name        string  `json:"name"`
+		Status      string  `json:"status"`
+		KOTID       *string `json:"kot_id"`
+		BillID      *string `json:"bill_id"`
+		FromOrderID *string `json:"from_order_id"`
+		Void        *struct {
+			Reason     string `json:"reason"`
+			ApprovedBy string `json:"approved_by"`
+		} `json:"void"`
+	} `json:"lines"`
+	KOTs []struct {
+		ID      string   `json:"id"`
+		No      string   `json:"no"`
+		Status  string   `json:"status"`
+		LineIDs []string `json:"line_ids"`
+	} `json:"kots"`
+}
+
+func (o orderDoc) lineStatus(id string) string {
+	for _, l := range o.Lines {
+		if l.ID == id {
+			return l.Status
+		}
+	}
+	return "missing"
+}
+
+type pullRes struct {
+	Orders  []orderDoc `json:"orders"`
+	Cursor  int64      `json:"cursor"`
+	HasMore bool       `json:"has_more"`
+}
+
+func (f *fixture) pull(t *testing.T, after int64, limit int) pullRes {
+	t.Helper()
+	var res pullRes
+	path := "/v1/sync/pull?after=" + strconv.FormatInt(after, 10)
+	if limit > 0 {
+		path += "&limit=" + strconv.Itoa(limit)
+	}
+	must(t, http.StatusOK, "GET", path, f.DeviceToken, nil, &res)
+	return res
+}
+
+func (f *fixture) order(t *testing.T, id string) orderDoc {
+	t.Helper()
+	var o orderDoc
+	must(t, http.StatusOK, "GET", "/v1/orders/"+id, f.OwnerToken, nil, &o)
+	return o
+}
+
+func (r pullRes) find(id string) (orderDoc, bool) {
+	for _, o := range r.Orders {
+		if o.ID == id {
+			return o, true
+		}
+	}
+	return orderDoc{}, false
 }

@@ -215,10 +215,9 @@ func CreatePairingCode(ctx context.Context, d *sql.DB, p auth.Principal, outletI
 	return code, expires, err
 }
 
-// OwnerRoutes is mounted at /v1/outlets/{outletID}.
-func OwnerRoutes(d *sql.DB) http.Handler {
-	r := chi.NewRouter()
-	r.Post("/pairing-codes", func(w http.ResponseWriter, r *http.Request) {
+// PairingCodeHandler serves POST /v1/outlets/{outletID}/pairing-codes (owner).
+func PairingCodeHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		outletID, err := uuid.Parse(chi.URLParam(r, "outletID"))
 		if err != nil {
 			httpx.Fail(w, r, httpx.ErrNotFound)
@@ -237,8 +236,7 @@ func OwnerRoutes(d *sql.DB) http.Handler {
 			return
 		}
 		httpx.JSON(w, http.StatusCreated, map[string]any{"code": code, "expires_at": exp})
-	})
-	return r
+	}
 }
 
 // RegisterHandler serves POST /v1/devices/register (public: the pairing code

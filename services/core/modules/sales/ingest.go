@@ -25,6 +25,7 @@ import (
 	"1xn/core/modules/catalogue"
 	"1xn/core/modules/identity"
 	"1xn/core/modules/ledger"
+	"1xn/core/modules/orders"
 	"1xn/core/modules/sales/pricing"
 )
 
@@ -44,6 +45,11 @@ type SettledBill struct {
 	Totals       json.RawMessage `json:"totals"` // what the device printed (pricing.Result)
 	Payments     []Payment       `json:"payments"`
 	TipPaise     int64           `json:"tip_paise,omitempty"`
+	// OrderID and LineIDs link the bill to a table order. LineIDs[i] is the
+	// order line billed as Input.Lines[i]. A split bill lists only its lines.
+	// Quick takeaway bills with no order leave both empty.
+	OrderID *uuid.UUID  `json:"order_id,omitempty"`
+	LineIDs []uuid.UUID `json:"line_ids,omitempty"`
 }
 
 // Payment is one tender.
@@ -56,7 +62,12 @@ type Payment struct {
 var (
 	channels = map[string]bool{"dine_in": true, "takeaway": true, "delivery": true, "swiggy": true, "zomato": true}
 	methods  = map[string]bool{"cash": true, "upi": true, "card": true, "credit": true}
+	// gstStart is when GST began (1 July 2017); no GST invoice predates it.
+	gstStart = time.Date(2017, 7, 1, 0, 0, 0, 0, gst.IST)
 )
+
+// maxClockAhead is how far in the future a device clock may run.
+const maxClockAhead = 48 * time.Hour
 
 func reject(code, msg string) error   { return syncop.Reject(code, "warning", msg) }
 func critical(code, msg string) error { return syncop.Reject(code, "critical", msg) }
@@ -99,6 +110,13 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	if b.IssuedAt.IsZero() {
 		return syncop.Applied{}, reject("bad_issued_at", "issued_at is required")
 	}
+	// A device clock that is years off would put the invoice in the wrong
+	// financial year (and, far enough out, break date encoding). Bills are
+	// issued in the past, never more than a clock's drift in the future.
+	if b.IssuedAt.Before(gstStart) || b.IssuedAt.After(time.Now().Add(maxClockAhead)) {
+		return syncop.Applied{}, reject("bad_issued_at",
+			fmt.Sprintf("issued_at %s is before GST began or more than 48 hours ahead; check the device clock", b.IssuedAt.Format(time.RFC3339)))
+	}
 	issued := b.IssuedAt.In(gst.IST)
 	if want := gst.FY(issued); fy != want {
 		return syncop.Applied{}, critical("wrong_financial_year",
@@ -139,6 +157,9 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	}
 	if err := consistent(in, printed); err != nil {
 		return syncop.Applied{}, critical("inconsistent_totals", err.Error())
+	}
+	if b.OrderID == nil && len(b.LineIDs) > 0 {
+		return syncop.Applied{}, reject("bad_payload", "line_ids need an order_id")
 	}
 
 	// Same bill id or same invoice number already stored?
@@ -217,15 +238,15 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 		  business_date, channel, table_label, covers, price_mode, supply,
 		  subtotal, discount_total, service_charge, taxable_total, cgst, sgst, igst, tax_total, round_off,
 		  grand_total, tip, input, device_result, verification, server_result, ledger_status,
-		  journal_entry_id, payload_hash, server_seq)
+		  journal_entry_id, payload_hash, server_seq, order_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), $12, $13, $14,
-		  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
+		  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)`,
 		billID, a.Device.TenantID, a.Device.LegalEntityID, a.Device.OutletID, a.Device.ID, b.InvoiceNo, fy, issued,
 		b.BusinessDate, b.Channel, b.TableLabel, b.Covers, in.PriceMode, in.Supply,
 		printed.Subtotal, printed.DiscountTotal, printed.ServiceCharge, printed.TaxableTotal,
 		printed.CGST, printed.SGST, printed.IGST, printed.TaxTotal, printed.RoundOff, printed.GrandTotal,
 		b.TipPaise, string(b.Input), string(b.Totals), verification, serverResult, ledgerStatus,
-		journalID, a.PayloadHash, seq); err != nil {
+		journalID, a.PayloadHash, seq, b.OrderID); err != nil {
 		return syncop.Applied{}, err
 	}
 	for i, l := range in.Lines {
@@ -256,6 +277,36 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 
 	if err := checkDrift(ctx, tx, a, billID, b.InvoiceNo, in); err != nil {
 		return syncop.Applied{}, err
+	}
+	if b.OrderID != nil {
+		// Link the bill to the order lines it charged. This never refuses the
+		// bill; anything odd becomes an alert.
+		var problems []string
+		if len(b.LineIDs) != len(in.Lines) {
+			problems = append(problems, fmt.Sprintf("bill has %d lines but names %d order lines", len(in.Lines), len(b.LineIDs)))
+		} else {
+			billed := make([]orders.BilledLine, len(b.LineIDs))
+			for i, id := range b.LineIDs {
+				l := in.Lines[i]
+				var mods int64
+				for _, m := range l.Modifiers {
+					mods += m.PricePaise
+				}
+				billed[i] = orders.BilledLine{LineID: id, Qty: l.Qty, UnitPricePaise: l.UnitPricePaise, ModifierPaise: mods}
+			}
+			p, err := orders.MarkBilled(ctx, tx, a.Device, seq, *b.OrderID, billed, billID, issued)
+			if err != nil {
+				return syncop.Applied{}, err
+			}
+			problems = p
+		}
+		if len(problems) > 0 {
+			if err := alerts.Raise(ctx, tx, a.Device.TenantID, "bill_order_mismatch", "warning", &billID, map[string]any{
+				"invoice_no": b.InvoiceNo, "order_id": *b.OrderID, "problems": problems,
+			}); err != nil {
+				return syncop.Applied{}, err
+			}
+		}
 	}
 	if verification == "mismatch" {
 		if err := alerts.Raise(ctx, tx, a.Device.TenantID, "price_mismatch", "critical", &billID, map[string]any{

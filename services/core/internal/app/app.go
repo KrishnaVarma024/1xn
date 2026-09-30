@@ -19,6 +19,7 @@ import (
 	"1xn/core/modules/devices"
 	"1xn/core/modules/identity"
 	"1xn/core/modules/ledger"
+	"1xn/core/modules/orders"
 	"1xn/core/modules/sales"
 	"1xn/core/modules/syncgw"
 )
@@ -26,13 +27,15 @@ import (
 // New returns the API handler.
 //
 //	Public:  POST /v1/signup, POST /v1/devices/register, GET /healthz, GET /readyz
-//	Owner:   /v1/outlets/{id}/pairing-codes, /v1/catalogue/*, /v1/bills/{id},
-//	         /v1/ledger/trial-balance, /v1/alerts
-//	Device:  GET /v1/devices/me/menu, POST /v1/sync/push
+//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders, /v1/catalogue/*,
+//	         /v1/orders/{id}, /v1/bills/{id}, /v1/ledger/trial-balance, /v1/alerts
+//	Device:  GET /v1/devices/me/menu, POST /v1/sync/push, GET /v1/sync/pull
 func New(d *sql.DB) http.Handler {
-	gw := &syncgw.Gateway{DB: d, Appliers: map[string]syncop.Applier{
-		sales.OpBillSettled: sales.ApplySettledBill,
-	}}
+	appliers := map[string]syncop.Applier{sales.OpBillSettled: sales.ApplySettledBill}
+	for op, fn := range orders.Appliers() {
+		appliers[op] = fn
+	}
+	gw := &syncgw.Gateway{DB: d, Appliers: appliers}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -58,7 +61,13 @@ func New(d *sql.DB) http.Handler {
 		// Owner.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(d, auth.Owner))
-			r.Mount("/outlets/{outletID}", devices.OwnerRoutes(d))
+			r.Route("/outlets/{outletID}", func(r chi.Router) {
+				r.Post("/pairing-codes", devices.PairingCodeHandler(d))
+				r.Post("/floors", catalogue.CreateFloorHandler(d))
+				r.Post("/tables", catalogue.CreateTableHandler(d))
+				r.Get("/orders", orders.OpenOrdersHandler(d))
+			})
+			r.Get("/orders/{orderID}", orders.GetOrderHandler(d))
 			r.Mount("/catalogue", catalogue.OwnerRoutes(d))
 			r.Mount("/bills", sales.Routes(d))
 			r.Mount("/ledger", ledger.Routes(d))
@@ -69,7 +78,8 @@ func New(d *sql.DB) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(d, auth.Device))
 			r.Mount("/devices/me", catalogue.DeviceRoutes(d))
-			r.Mount("/sync", gw.Routes())
+			r.Post("/sync/push", gw.PushHandler())
+			r.Get("/sync/pull", orders.PullHandler(d))
 		})
 	})
 	return r

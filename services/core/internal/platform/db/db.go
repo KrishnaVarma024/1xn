@@ -55,8 +55,19 @@ func InTenantTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(tx *
 	return err
 }
 
+// InTenantReadTx is InTenantTx for reads that must see one consistent
+// snapshot across several queries (REPEATABLE READ, read-only). Sync pull uses
+// it so the cursor it returns matches the data it returns.
+func InTenantReadTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(tx *sql.Tx) error) error {
+	return runTxOpts(ctx, d, tenantID, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, fn)
+}
+
 func runTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(tx *sql.Tx) error) (err error) {
-	tx, err := d.BeginTx(ctx, nil)
+	return runTxOpts(ctx, d, tenantID, nil, fn)
+}
+
+func runTxOpts(ctx context.Context, d *sql.DB, tenantID uuid.UUID, opts *sql.TxOptions, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := d.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}

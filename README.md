@@ -2,7 +2,7 @@
 
 Restaurant-first operating system for Indian F&B: POS, stock, kitchen, money and people in one product (Petpooja's speed plus Odoo's depth). Architecture and plans live in the project's Claude Docs; this repo is the code.
 
-**Status (29 Sep 2026): P0 foundations plus the POS core engine.** A restaurant can sign up, pair a till, publish a menu, sync bills that were priced offline (retries are safe) and see them posted as balanced journal entries. The screens (Flutter POS) come next.
+**Status (30 Sep 2026): P0 foundations, the POS core engine, and the restaurant floor.** A restaurant can sign up, pair a till, publish a menu, sync bills that were priced offline (retries are safe) and see them posted as balanced journal entries. Captains, tills and kitchen screens can now run tables together: orders, KOTs by kitchen section, voids, table moves and merges, split bills, and pull of other devices' changes, all offline-first. The screens (Flutter POS) come next.
 
 ## What is built
 
@@ -12,7 +12,9 @@ Restaurant-first operating system for Indian F&B: POS, stock, kitchen, money and
 | Tenancy | Postgres Row-Level Security, app role that cannot bypass it, fail-closed tenant context, composite FKs | `migrations/0001_platform.sql`, `internal/platform/db` |
 | Identity | Signup in one transaction, GSTIN check-digit validation, hashed bearer tokens | `modules/identity`, `internal/platform/auth` |
 | Devices | Pairing codes (single-use, 10 min), a per-device GST invoice series `PPP-FFFF-NNNNNN` | `modules/devices`, `internal/platform/gst` |
-| Catalogue | Tax profiles, categories, items, channel prices, one-tap sold out, versioned menu with ETag / 304 | `modules/catalogue` |
+| Catalogue | Tax profiles, categories, items, channel prices, one-tap sold out, kitchen sections, modifier groups, floors and tables, versioned menu with ETag / 304 | `modules/catalogue` |
+| Orders | Tables, lines with modifiers and courses, KOTs per kitchen section, KDS status, voids (with approval or an alert), table moves, merges (with forwarding), late items (spillover order), split bills linked to lines. A pure reducer; conflicts settled by rule, not by refusal | `modules/orders` |
+| Sync pull | Other devices' changes as current order state, by a commit-ordered cursor, paged; bootstrap on first pull | `modules/orders/http.go` |
 | Sync gateway | Exactly-once ops: inbox dedupe, device row lock, savepoints, poison ops rejected (never retried forever), commit-ordered server sequence, gap alerts | `modules/syncgw` |
 | Sales | Bill ingest with server-side re-pricing and catalogue drift checks; mismatches kept and flagged, never dropped | `modules/sales` |
 | Ledger | Double entry in paise, posting rule for bills, suspense for payment differences, DB-enforced balance, append-only, periods | `modules/ledger`, `migrations/0004_ledger.sql` |
@@ -60,13 +62,17 @@ export DB_PORT=5432   # then make test / make run as usual (skip make up)
 | anyone | `POST /v1/signup` | tenant + GSTIN + outlet + owner; returns the owner token once |
 | anyone | `POST /v1/devices/register` | redeem a pairing code; returns the device token and invoice series |
 | owner | `POST /v1/outlets/{id}/pairing-codes` | a code for a new till, captain phone, KDS or hub |
-| owner | `POST /v1/catalogue/tax-profiles`, `/categories`, `/items` | build the menu |
+| owner | `POST /v1/outlets/{id}/floors`, `/tables` | lay out the dining room |
+| owner | `POST /v1/catalogue/tax-profiles`, `/categories`, `/sections`, `/modifier-groups`, `/items` | build the menu and route it to kitchen sections |
 | owner | `PATCH /v1/catalogue/items/{id}/availability` | one-tap sold out |
+| owner | `GET /v1/outlets/{id}/orders` | the live floor: every open order |
+| owner | `GET /v1/orders/{id}` | one order with its lines, KOTs and bill links |
 | owner | `GET /v1/bills/{id}` | a bill, its verification and its journal lines |
 | owner | `GET /v1/ledger/trial-balance` | every account's total; `balanced: true` |
 | owner | `GET /v1/alerts` | mismatches, conflicts, gaps, locked periods |
 | device | `GET /v1/devices/me/menu` | menu snapshot with ETag |
-| device | `POST /v1/sync/push` | up to 200 ops; one ack each |
+| device | `POST /v1/sync/push` | up to 200 ops; one ack each. Ops: `bill.settled`, `order.opened`, `order.lines_added`, `kot.fired`, `kot.status_changed`, `order.line_voided`, `order.moved`, `order.merged`, `order.cancelled` |
+| device | `GET /v1/sync/pull?after=N` | orders changed by any device since cursor N (`after=0` bootstraps) |
 
 ## Layout
 
@@ -77,7 +83,7 @@ export DB_PORT=5432   # then make test / make run as usual (skip make up)
 │   ├── cmd/              api, migrate, demo
 │   ├── internal/         app wiring, platform (db, auth, gst, httpx, ids, alerts, outbox, syncop), e2e tests
 │   ├── migrations/       SQL schema, embedded in the binary
-│   └── modules/          identity, devices, catalogue, syncgw, sales (+ pricing), ledger
+│   └── modules/          identity, devices, catalogue, orders, syncgw, sales (+ pricing), ledger
 ├── packages/golden/      tax golden cases shared by every engine
 ├── tools/golden/         Python reference oracle
 ├── infra/local/          local database init
@@ -98,6 +104,6 @@ export DB_PORT=5432   # then make test / make run as usual (skip make up)
 
 ## Next
 
-1. **Flutter POS (device app):** Dart pricing engine passing the golden files, SQLite op log, order screen, bill print, push sync.
-2. **Sync pull:** menu and cross-device changes by `server_seq`; outbox relay to NATS JetStream.
-3. **KOT routing and the outlet hub** (LAN relay), then day close.
+1. **Flutter POS (device app):** Dart pricing engine and order reducer passing the shared cases, SQLite op log, table and order screens, KOT and bill print, push and pull sync. Blocked until the sandbox can reach `storage.googleapis.com` and `pub.dev`.
+2. **Outlet hub** (LAN relay, so tables keep syncing between devices when the internet is down), push hints instead of polling, outbox relay to NATS JetStream.
+3. **Day close:** cash drawer, shift report, Z report, and pruning of `change_log`.

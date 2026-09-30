@@ -10,6 +10,7 @@ The notes in this folder explain *why* the code looks the way it does. Read them
 | [02 Tenancy and Row-Level Security](02-tenancy-and-rls.md) | how 1,000 restaurants share one database without seeing each other |
 | [03 Offline sync, exactly once](03-offline-sync-exactly-once.md) | op logs, idempotency, sequence numbers, why retries are always safe |
 | [04 The double-entry ledger](04-double-entry-ledger.md) | debits, credits, posting rules, and why the database polices the books |
+| [05 Orders, tables, KOTs and conflicts](05-orders-and-conflicts.md) | pure reducers, conflict rules for offline devices, tombstones, lock order, state-based pull |
 
 ## The life of one bill
 
@@ -47,14 +48,15 @@ Everything between BEGIN and COMMIT happens or none of it does. That one propert
 
 1. `services/core/modules/sales/pricing/engine.go`: the pure pricing engine. No database, no HTTP.
 2. `packages/golden/tax/cases.json`: what the engine must answer, case by case.
-3. `services/core/migrations/0001_platform.sql` to `0005_sales_sync.sql`: the data model. The comments explain the rules.
+3. `services/core/migrations/0001_platform.sql` to `0007_orders.sql`: the data model. The comments explain the rules.
 4. `services/core/internal/platform/db/db.go`: `InTenantTx`, the heart of multi-tenancy.
 5. `services/core/modules/identity/identity.go`: signup, one transaction.
 6. `services/core/modules/devices/devices.go`: pairing and invoice series.
 7. `services/core/modules/syncgw/syncgw.go`: exactly-once sync.
 8. `services/core/modules/sales/ingest.go`: what happens to a bill.
 9. `services/core/modules/ledger/rules.go` then `ledger.go`: posting rules and posting.
-10. `services/core/internal/e2e/*_test.go`: the whole thing exercised against real Postgres.
+10. `services/core/modules/orders/domain.go`: the order reducer, then `store.go`, `apply.go`, `billing.go` and `http.go` (pull).
+11. `services/core/internal/e2e/*_test.go`: the whole thing exercised against real Postgres.
 
 ## How we test
 
@@ -66,7 +68,7 @@ Everything between BEGIN and COMMIT happens or none of it does. That one propert
 | Oracle | An independent Python engine must agree with the golden files | `tools/golden/oracle.py` |
 | End to end | The real API on a real Postgres, as the real non-owner role | `internal/e2e` |
 
-The slice also went through an adversarial review by a second agent. It found eight real issues, the worst being a comped bill that blocked a till's sync forever. Each fix has a regression test in `internal/e2e/hardening_test.go`.
+Each slice also goes through an adversarial review by a second agent. The first review found eight real issues, the worst being a comped bill that blocked a till's sync forever; each fix has a regression test in `internal/e2e/hardening_test.go`. The orders review found eight more, plus three smaller ones (note 05 has the story); their tests are in `internal/e2e/orders_hardening_test.go`.
 
 A test is only useful if it fails when the code is wrong. While building this slice we checked that. We removed the device row lock in `syncgw`, and `TestConcurrentRetriesApplyOnce` failed with 503s. We restored the lock, and it passed again. Try the same trick on any test you doubt.
 
@@ -82,3 +84,8 @@ A test is only useful if it fails when the code is wrong. While building this sl
 - **Idempotent**: doing it twice has the same effect as doing it once.
 - **Outbox**: events written in the same transaction as the data, sent out later.
 - **Suspense account**: where an accountant parks money that does not match yet, so the books still balance.
+- **KOT**: kitchen order ticket; the slip (or screen card) that tells one kitchen section what to cook.
+- **KDS**: kitchen display system; a screen in the kitchen that shows KOTs instead of printing them.
+- **Captain**: the waiter who takes orders at the table, here on a phone.
+- **Reducer**: a pure function `(state, command) → new state`. No I/O, so it is easy to test and to port.
+- **Tombstone**: a record kept after it is merged or deleted, pointing to where things went, so late writers are not lost.
