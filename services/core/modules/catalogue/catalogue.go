@@ -9,10 +9,13 @@ package catalogue
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -548,7 +551,7 @@ func OwnerRoutes(d *sql.DB) http.Handler {
 			return
 		}
 		it.Name = strings.TrimSpace(it.Name)
-		if it.Name == "" || it.PricePaise < 0 || it.PricePaise > 1_000_000_000 {
+		if it.Name == "" || utf8.RuneCountInString(it.Name) > 200 || it.PricePaise < 0 || it.PricePaise > 1_000_000_000 {
 			httpx.Fail(w, r, bad("bad_item", "name is required and price_paise must be 0 to 1,000,000,000"))
 			return
 		}
@@ -606,6 +609,26 @@ func OwnerRoutes(d *sql.DB) http.Handler {
 		})
 	})
 
+	r.Patch("/items/{itemID}", func(w http.ResponseWriter, r *http.Request) {
+		itemID, err := uuid.Parse(chi.URLParam(r, "itemID"))
+		if err != nil {
+			httpx.Fail(w, r, httpx.ErrNotFound)
+			return
+		}
+		var p itemPatch
+		if err := httpx.Decode(w, r, 8<<10, &p); err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		if err := p.validate(); err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		writeIf(w, r, d, http.StatusOK, map[string]any{"id": itemID}, func(ctx context.Context, tx *sql.Tx, tenant uuid.UUID) (bool, error) {
+			return updateItem(ctx, tx, tenant, itemID, p)
+		})
+	})
+
 	// The one-tap "sold out": flips availability and bumps the version, so
 	// every till hides the item on its next menu check.
 	r.Patch("/items/{itemID}/availability", func(w http.ResponseWriter, r *http.Request) {
@@ -637,6 +660,276 @@ func OwnerRoutes(d *sql.DB) http.Handler {
 	return r
 }
 
+// optUUID tells "field absent" (leave it) from "field is null" (clear it) in
+// a PATCH body. Go's *uuid.UUID cannot: both decode to nil.
+type optUUID struct {
+	Set   bool
+	Value *uuid.UUID
+}
+
+func (o *optUUID) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		return nil
+	}
+	var u uuid.UUID
+	if err := json.Unmarshal(b, &u); err != nil {
+		return err
+	}
+	o.Value = &u
+	return nil
+}
+
+// itemPatch is PATCH /v1/catalogue/items/{itemID}. Every field is optional;
+// lists (modifier groups, channel prices) are replaced whole when sent.
+type itemPatch struct {
+	Name             *string           `json:"name"`
+	PricePaise       *int64            `json:"price_paise"`
+	CategoryID       *uuid.UUID        `json:"category_id"`
+	TaxProfileID     *uuid.UUID        `json:"tax_profile_id"`
+	SectionID        optUUID           `json:"section_id"`
+	ModifierGroupIDs *[]uuid.UUID      `json:"modifier_group_ids"`
+	ChannelPrices    *map[string]int64 `json:"channel_prices"`
+	Available        *bool             `json:"available"`
+}
+
+func (p *itemPatch) validate() error {
+	if p.Name != nil {
+		n := strings.TrimSpace(*p.Name)
+		if n == "" || utf8.RuneCountInString(n) > 200 { // characters, like the database CHECK
+			return bad("bad_item", "name must be 1 to 200 characters")
+		}
+		p.Name = &n
+	}
+	if p.PricePaise != nil && (*p.PricePaise < 0 || *p.PricePaise > 1_000_000_000) {
+		return bad("bad_item", "price_paise must be 0 to 1,000,000,000")
+	}
+	if p.ChannelPrices != nil {
+		for ch, v := range *p.ChannelPrices {
+			if !channels[ch] || v < 0 || v > 1_000_000_000 {
+				return bad("bad_channel_price", fmt.Sprintf("channel %q or its price is invalid", ch))
+			}
+		}
+	}
+	if p.ModifierGroupIDs != nil {
+		if len(*p.ModifierGroupIDs) > 20 {
+			return bad("bad_item", "at most 20 modifier groups per item")
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, g := range *p.ModifierGroupIDs {
+			if seen[g] {
+				return bad("bad_item", "modifier_group_ids has a duplicate")
+			}
+			seen[g] = true
+		}
+	}
+	return nil
+}
+
+// updateItem applies a patch inside the caller's transaction and reports
+// whether anything actually changed. The back office re-sends every field on
+// each save; a save that changes nothing must not bump the menu version, or
+// every till in the tenant re-downloads the whole menu for nothing.
+func updateItem(ctx context.Context, tx *sql.Tx, tenant, itemID uuid.UUID, p itemPatch) (bool, error) {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT true FROM menu_item WHERE id = $1 FOR UPDATE`, itemID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, httpx.ErrNotFound
+		}
+		return false, err
+	}
+	changed := false
+	set := func(col string, v any) error {
+		// IS DISTINCT FROM: only a real change touches the row (and NULL = NULL).
+		res, err := tx.ExecContext(ctx, `UPDATE menu_item SET `+col+` = $2, updated_at = now()
+			WHERE id = $1 AND `+col+` IS DISTINCT FROM $2`, itemID, v)
+		if err != nil {
+			return foreignKeyToBadRequest(err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			changed = true
+		}
+		return nil
+	}
+	fields := []struct {
+		on  bool
+		col string
+		v   func() any
+	}{
+		{p.Name != nil, "name", func() any { return *p.Name }},
+		{p.PricePaise != nil, "price_paise", func() any { return *p.PricePaise }},
+		{p.CategoryID != nil, "category_id", func() any { return *p.CategoryID }},
+		{p.TaxProfileID != nil, "tax_profile_id", func() any { return *p.TaxProfileID }},
+		{p.SectionID.Set, "section_id", func() any { return p.SectionID.Value }},
+		{p.Available != nil, "available", func() any { return *p.Available }},
+	}
+	for _, f := range fields {
+		if f.on {
+			if err := set(f.col, f.v()); err != nil {
+				return false, err
+			}
+		}
+	}
+	if p.ModifierGroupIDs != nil {
+		var current []string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT coalesce(array_agg(group_id::text ORDER BY sort, group_id), '{}')
+			FROM menu_item_modifier_group WHERE item_id = $1`, itemID).Scan(pq.Array(&current)); err != nil {
+			return false, err
+		}
+		if !sameIDs(current, *p.ModifierGroupIDs) {
+			changed = true
+			if _, err := tx.ExecContext(ctx, `DELETE FROM menu_item_modifier_group WHERE item_id = $1`, itemID); err != nil {
+				return false, err
+			}
+			for i, g := range *p.ModifierGroupIDs {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO menu_item_modifier_group (tenant_id, item_id, group_id, sort) VALUES ($1, $2, $3, $4)`,
+					tenant, itemID, g, i); err != nil {
+					return false, foreignKeyToBadRequest(err)
+				}
+			}
+		}
+	}
+	if p.ChannelPrices != nil {
+		current := map[string]int64{}
+		rows, err := tx.QueryContext(ctx, `SELECT channel, price_paise FROM menu_item_channel_price WHERE item_id = $1`, itemID)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			var ch string
+			var v int64
+			if err := rows.Scan(&ch, &v); err != nil {
+				rows.Close()
+				return false, err
+			}
+			current[ch] = v
+		}
+		rows.Close()
+		if !maps.Equal(current, *p.ChannelPrices) {
+			changed = true
+			if _, err := tx.ExecContext(ctx, `DELETE FROM menu_item_channel_price WHERE item_id = $1`, itemID); err != nil {
+				return false, err
+			}
+			for ch, v := range *p.ChannelPrices {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO menu_item_channel_price (tenant_id, item_id, channel, price_paise) VALUES ($1, $2, $3, $4)`,
+					tenant, itemID, ch, v); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
+	return changed, nil
+}
+
+func sameIDs(current []string, next []uuid.UUID) bool {
+	if len(current) != len(next) {
+		return false
+	}
+	for i, id := range next {
+		if current[i] != id.String() {
+			return false
+		}
+	}
+	return true
+}
+
+// OutletMenuHandler serves GET /v1/outlets/{outletID}/menu (owner): the same
+// snapshot a device of that outlet gets, for the back office.
+func OutletMenuHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		outletID, err := uuid.Parse(chi.URLParam(r, "outletID"))
+		if err != nil {
+			httpx.Fail(w, r, httpx.ErrNotFound)
+			return
+		}
+		p := auth.Must(r.Context())
+		var snap Snapshot
+		err = db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+			var err error
+			snap, err = loadSnapshot(r.Context(), tx, p.TenantID, outletID)
+			if errors.Is(err, identity.ErrNoOutlet) {
+				return httpx.ErrNotFound
+			}
+			return err
+		})
+		if err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, snap)
+	}
+}
+
+// UpdateTableHandler serves PATCH /v1/outlets/{outletID}/tables/{tableID}
+// (owner): relabel, resize, or switch a table off. Switching off keeps the
+// table (orders point at it); devices stop offering it.
+func UpdateTableHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		outletID, err1 := uuid.Parse(chi.URLParam(r, "outletID"))
+		tableID, err2 := uuid.Parse(chi.URLParam(r, "tableID"))
+		if err1 != nil || err2 != nil {
+			httpx.Fail(w, r, httpx.ErrNotFound)
+			return
+		}
+		var req struct {
+			Label  *string `json:"label"`
+			Seats  *int    `json:"seats"`
+			Active *bool   `json:"active"`
+		}
+		if err := httpx.Decode(w, r, 1<<10, &req); err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		if req.Label != nil {
+			l := strings.TrimSpace(*req.Label)
+			if l == "" || utf8.RuneCountInString(l) > 20 {
+				httpx.Fail(w, r, bad("bad_table", "label is 1 to 20 characters"))
+				return
+			}
+			req.Label = &l
+		}
+		if req.Seats != nil && (*req.Seats < 1 || *req.Seats > 50) {
+			httpx.Fail(w, r, bad("bad_table", "seats must be 1 to 50"))
+			return
+		}
+		var t Table
+		writeIf(w, r, d, http.StatusOK, &t, func(ctx context.Context, tx *sql.Tx, _ uuid.UUID) (bool, error) {
+			err := tx.QueryRowContext(ctx, `
+				SELECT id, label, seats, sort, active FROM dining_table WHERE id = $1 AND outlet_id = $2 FOR UPDATE`,
+				tableID, outletID).Scan(&t.ID, &t.Label, &t.Seats, &t.Sort, &t.Active)
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, httpx.ErrNotFound
+			}
+			if err != nil {
+				return false, err
+			}
+			next := t
+			if req.Label != nil {
+				next.Label = *req.Label
+			}
+			if req.Seats != nil {
+				next.Seats = *req.Seats
+			}
+			if req.Active != nil {
+				next.Active = *req.Active
+			}
+			if next == t {
+				return false, nil // nothing to change: no write, no menu version bump
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE dining_table SET label = $2, seats = $3, active = $4 WHERE id = $1`,
+				t.ID, next.Label, next.Seats, next.Active)
+			if db.IsUniqueViolation(err, "") {
+				return false, httpx.E(http.StatusConflict, "duplicate_table", "this outlet already has a table with that label")
+			}
+			t = next
+			return true, err
+		})
+	}
+}
+
 // CreateFloorHandler serves POST /v1/outlets/{outletID}/floors (owner).
 func CreateFloorHandler(d *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -651,7 +944,7 @@ func CreateFloorHandler(d *sql.DB) http.HandlerFunc {
 			return
 		}
 		f.Name = strings.TrimSpace(f.Name)
-		if f.Name == "" || len(f.Name) > 60 || len(f.Tables) > 0 {
+		if f.Name == "" || utf8.RuneCountInString(f.Name) > 60 || len(f.Tables) > 0 {
 			httpx.Fail(w, r, bad("bad_floor", "name is required (max 60 characters); add tables separately"))
 			return
 		}
@@ -695,7 +988,7 @@ func CreateTableHandler(d *sql.DB) http.HandlerFunc {
 		if req.Seats == 0 {
 			req.Seats = 4
 		}
-		if req.Label == "" || len(req.Label) > 20 || req.Seats < 1 || req.Seats > 50 {
+		if req.Label == "" || utf8.RuneCountInString(req.Label) > 20 || req.Seats < 1 || req.Seats > 50 {
 			httpx.Fail(w, r, bad("bad_table", "label is 1 to 20 characters and seats 1 to 50"))
 			return
 		}
@@ -731,6 +1024,26 @@ func write(w http.ResponseWriter, r *http.Request, d *sql.DB, status int, body a
 			return err
 		}
 		_, err := bump(r.Context(), tx, p.TenantID)
+		return err
+	})
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, status, body)
+}
+
+// writeIf is write for changes that may turn out to be no-ops: the menu
+// version is bumped only when fn reports that something changed.
+func writeIf(w http.ResponseWriter, r *http.Request, d *sql.DB, status int, body any,
+	fn func(ctx context.Context, tx *sql.Tx, tenant uuid.UUID) (bool, error)) {
+	p := auth.Must(r.Context())
+	err := db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+		changed, err := fn(r.Context(), tx, p.TenantID)
+		if err != nil || !changed {
+			return err
+		}
+		_, err = bump(r.Context(), tx, p.TenantID)
 		return err
 	})
 	if err != nil {

@@ -56,3 +56,31 @@ jobs:
 
       - name: short fuzz run
         run: go test ./modules/sales/pricing -run XXX -fuzz FuzzCompute -fuzztime 20s
+
+  backoffice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/backoffice
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backoffice/package-lock.json
+
+      - run: npm ci
+
+      - name: types
+        run: npm run typecheck
+
+      - name: unit tests (money, rates)
+        run: npm test
+
+      - name: production build
+        run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

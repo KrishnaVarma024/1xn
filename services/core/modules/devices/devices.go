@@ -256,3 +256,88 @@ func RegisterHandler(d *sql.DB) http.HandlerFunc {
 		httpx.JSON(w, http.StatusCreated, res)
 	}
 }
+
+// Listed is a device as the back office shows it.
+type Listed struct {
+	ID            uuid.UUID  `json:"id"`
+	Name          string     `json:"name"`
+	Role          string     `json:"role"`
+	InvoicePrefix string     `json:"invoice_prefix"`
+	LastDeviceSeq int64      `json:"last_device_seq"`
+	RegisteredAt  time.Time  `json:"registered_at"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+}
+
+// ListHandler serves GET /v1/outlets/{outletID}/devices (owner).
+func ListHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		outletID, err := uuid.Parse(chi.URLParam(r, "outletID"))
+		if err != nil {
+			httpx.Fail(w, r, httpx.ErrNotFound)
+			return
+		}
+		p := auth.Must(r.Context())
+		out := []Listed{}
+		err = db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+			if _, err := identity.Outlet(r.Context(), tx, outletID); err != nil {
+				if errors.Is(err, identity.ErrNoOutlet) {
+					return httpx.ErrNotFound
+				}
+				return err
+			}
+			rows, err := tx.QueryContext(r.Context(), `
+				SELECT id, name, role, invoice_prefix, last_device_seq, registered_at, revoked_at
+				FROM device WHERE outlet_id = $1 ORDER BY revoked_at IS NOT NULL, registered_at, id`, outletID)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var l Listed
+				var revoked sql.NullTime
+				if err := rows.Scan(&l.ID, &l.Name, &l.Role, &l.InvoicePrefix, &l.LastDeviceSeq, &l.RegisteredAt, &revoked); err != nil {
+					return err
+				}
+				if revoked.Valid {
+					l.RevokedAt = &revoked.Time
+				}
+				out = append(out, l)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"devices": out})
+	}
+}
+
+// RevokeHandler serves POST /v1/devices/{deviceID}/revoke (owner). A lost or
+// stolen phone stops working at once: auth_resolve refuses tokens of revoked
+// devices. Its invoice series is never handed out again.
+func RevokeHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "deviceID"))
+		if err != nil {
+			httpx.Fail(w, r, httpx.ErrNotFound)
+			return
+		}
+		p := auth.Must(r.Context())
+		var revokedAt time.Time
+		err = db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+			err := tx.QueryRowContext(r.Context(), `
+				UPDATE device SET revoked_at = coalesce(revoked_at, now()) WHERE id = $1 RETURNING revoked_at`, id).
+				Scan(&revokedAt)
+			if errors.Is(err, sql.ErrNoRows) {
+				return httpx.ErrNotFound
+			}
+			return err
+		})
+		if err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"id": id, "revoked_at": revokedAt})
+	}
+}

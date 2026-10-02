@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"github.com/lib/pq"
 )
 
 // Error is the one error body the API ever returns:
@@ -45,7 +47,14 @@ func JSON(w http.ResponseWriter, status int, v any) {
 // and hidden behind a generic 500, so internal details never reach clients.
 func Fail(w http.ResponseWriter, r *http.Request, err error) {
 	var e *Error
-	if !errors.As(err, &e) {
+	var pe *pq.Error
+	switch {
+	case errors.As(err, &e):
+	case errors.As(err, &pe) && (pe.Code.Class() == "22" || pe.Code == "23514"):
+		// A value Postgres refused: too long for a CHECK, a NUL byte, a date
+		// out of range. The input was wrong, so it is a 400, never a 500.
+		e = E(http.StatusBadRequest, "bad_input", "a value is too long, out of range or not allowed")
+	default:
 		slog.ErrorContext(r.Context(), "internal error", "err", err, "path", r.URL.Path)
 		e = E(http.StatusInternalServerError, "internal", "something went wrong; it has been logged")
 	}

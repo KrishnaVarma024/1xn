@@ -1,0 +1,40 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const links = [
+  { href: "/floor", label: "Live floor", icon: "M4 5h16v14H4zM4 10h16M10 5v14" },
+  { href: "/menu", label: "Menu", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
+  { href: "/tables", label: "Tables", icon: "M4 9h16M6 9v9M18 9v9M8 5h8" },
+  { href: "/devices", label: "Devices", icon: "M7 3h10v18H7zM11 18h2" },
+  { href: "/bills", label: "Bills", icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" },
+  { href: "/alerts", label: "Alerts", icon: "M12 4l9 16H3zM12 10v4M12 17h.01" },
+  { href: "/books", label: "Books", icon: "M5 4h6a2 2 0 012 2v14a2 2 0 00-2-2H5zM19 4h-6a2 2 0 00-2 2v14a2 2 0 012-2h6z" },
+];
+
+export function Nav() {
+  const path = usePathname();
+  return (
+    <nav aria-label="Main" className="flex gap-1 overflow-x-auto md:flex-col">
+      {links.map((l) => {
+        const active = path === l.href || path.startsWith(l.href + "/") || (l.href === "/floor" && path.startsWith("/orders"));
+        return (
+          <Link
+            key={l.href}
+            href={l.href}
+            aria-current={active ? "page" : undefined}
+            className={`flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              active ? "bg-neel-700 text-white" : "text-ink-soft hover:bg-neel-50 hover:text-neel-700"
+            }`}
+          >
+            <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d={l.icon} />
+            </svg>
+            {l.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}

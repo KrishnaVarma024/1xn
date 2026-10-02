@@ -61,12 +61,17 @@ func New(d *sql.DB) http.Handler {
 		// Owner.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(d, auth.Owner))
+			r.Get("/me", identity.MeHandler(d))
 			r.Route("/outlets/{outletID}", func(r chi.Router) {
+				r.Get("/menu", catalogue.OutletMenuHandler(d))
 				r.Post("/pairing-codes", devices.PairingCodeHandler(d))
+				r.Get("/devices", devices.ListHandler(d))
 				r.Post("/floors", catalogue.CreateFloorHandler(d))
 				r.Post("/tables", catalogue.CreateTableHandler(d))
+				r.Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
 				r.Get("/orders", orders.OpenOrdersHandler(d))
 			})
+			r.Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))
 			r.Get("/orders/{orderID}", orders.GetOrderHandler(d))
 			r.Mount("/catalogue", catalogue.OwnerRoutes(d))
 			r.Mount("/bills", sales.Routes(d))

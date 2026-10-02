@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* 1x.n palette (architecture doc): Neel, Marigold, Ink, Chalk, Curry leaf, Chilli. */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-neel-50: #eef0fb;
+  --color-neel-100: #dde0f5;
+  --color-neel-200: #bcc1ea;
+  --color-neel-600: #3a40a8;
+  --color-neel-700: #2f3490;
+  --color-neel-800: #262a75;
+
+  --color-marigold-50: #fef6e7;
+  --color-marigold-100: #fdeac4;
+  --color-marigold-400: #f4a51c;
+  --color-marigold-700: #9a5f00;
+
+  --color-ink: #1c1e26;
+  --color-ink-soft: #5b5f6b;
+  --color-ink-faint: #8a8e99;
+  --color-line: #e7e3da;
+  --color-chalk: #faf8f4;
+
+  --color-curry-50: #e8f4ec;
+  --color-curry-700: #1e7a46;
+
+  --color-chilli-50: #fbeae9;
+  --color-chilli-700: #c8342b;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-chalk);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-neel-600);
+  outline-offset: 2px;
+}

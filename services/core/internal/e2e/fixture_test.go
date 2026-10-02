@@ -85,13 +85,14 @@ func newRestaurant(t *testing.T, name, gstin, state string) *fixture {
 
 // billOpts tweaks a bill before it is sent.
 type billOpts struct {
-	issuedAt  time.Time
-	invoiceNo string
-	payments  []sales.Payment
-	tamper    func(in *pricing.Input) // change the input AFTER pricing, to fake a device bug
-	billID    string
-	orderID   *uuid.UUID  // link the bill to a table order
-	lineIDs   []uuid.UUID // the order lines billed, aligned with the input lines
+	issuedAt     time.Time
+	businessDate string // default: the issue date
+	invoiceNo    string
+	payments     []sales.Payment
+	tamper       func(in *pricing.Input) // change the input AFTER pricing, to fake a device bug
+	billID       string
+	orderID      *uuid.UUID  // link the bill to a table order
+	lineIDs      []uuid.UUID // the order lines billed, aligned with the input lines
 }
 
 // bill prices lines exactly like the device will (same engine, same rules)
@@ -108,6 +109,9 @@ func (f *fixture) bill(t *testing.T, in pricing.Input, o billOpts) syncgw.Op {
 	if o.issuedAt.IsZero() {
 		o.issuedAt = dinner
 	}
+	if o.businessDate == "" {
+		o.businessDate = o.issuedAt.Format(time.DateOnly)
+	}
 	if o.invoiceNo == "" {
 		o.invoiceNo = gst.InvoiceNo(f.Prefix, gst.FY(o.issuedAt), f.nextInvoice)
 		f.nextInvoice++
@@ -122,7 +126,7 @@ func (f *fixture) bill(t *testing.T, in pricing.Input, o billOpts) syncgw.Op {
 	totRaw, _ := json.Marshal(totals)
 	payload, _ := json.Marshal(sales.SettledBill{
 		BillID: o.billID, InvoiceNo: o.invoiceNo, IssuedAt: o.issuedAt,
-		BusinessDate: o.issuedAt.Format(time.DateOnly), Channel: "dine_in", TableLabel: "T4", Covers: 2,
+		BusinessDate: o.businessDate, Channel: "dine_in", TableLabel: "T4", Covers: 2,
 		Input: inRaw, Totals: totRaw, Payments: o.payments,
 		OrderID: o.orderID, LineIDs: o.lineIDs,
 	})

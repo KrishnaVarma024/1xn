@@ -1,7 +1,7 @@
 // Package identity owns tenants, legal entities (GSTINs), outlets and users.
 //
 // Cross-module API (the only functions other modules may call):
-// Outlet, OutletInfo.
+// Outlet, OutletInfo, MeHandler.
 package identity
 
 import (
@@ -197,4 +197,60 @@ func Routes(d *sql.DB) http.Handler {
 		httpx.JSON(w, http.StatusCreated, res)
 	})
 	return r
+}
+
+// Me is who the owner is and what they own: the back office's first call.
+type Me struct {
+	TenantID     uuid.UUID    `json:"tenant_id"`
+	BusinessName string       `json:"business_name"`
+	User         MeUser       `json:"user"`
+	Outlets      []OutletInfo `json:"outlets"`
+}
+
+// MeUser is the signed-in person.
+type MeUser struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Phone string    `json:"phone"`
+	Role  string    `json:"role"`
+}
+
+// MeHandler serves GET /v1/me (owner).
+func MeHandler(d *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p := auth.Must(r.Context())
+		me := Me{TenantID: p.TenantID, Outlets: []OutletInfo{}}
+		err := db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+			if err := tx.QueryRowContext(r.Context(), `SELECT name FROM tenant WHERE id = $1`, p.TenantID).
+				Scan(&me.BusinessName); err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(r.Context(), `SELECT id, name, phone, role FROM app_user WHERE id = $1`, p.SubjectID).
+				Scan(&me.User.ID, &me.User.Name, &me.User.Phone, &me.User.Role); err != nil {
+				return err
+			}
+			rows, err := tx.QueryContext(r.Context(), `
+				SELECT o.id, o.name, o.state_code, o.price_mode, o.rounding, l.id, l.name, coalesce(l.gstin, '')
+				FROM outlet o JOIN legal_entity l ON l.id = o.legal_entity_id
+				ORDER BY o.created_at, o.id`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var o OutletInfo
+				if err := rows.Scan(&o.ID, &o.Name, &o.StateCode, &o.PriceMode, &o.Rounding,
+					&o.LegalEntityID, &o.LegalEntityName, &o.GSTIN); err != nil {
+					return err
+				}
+				me.Outlets = append(me.Outlets, o)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			httpx.Fail(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, me)
+	}
 }

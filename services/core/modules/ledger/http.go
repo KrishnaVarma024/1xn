@@ -41,7 +41,7 @@ func TrialBalance(ctx context.Context, tx *sql.Tx) ([]Balance, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Balance
+	out := []Balance{} // [] not null: "no accounts moved yet" is an answer
 	for rows.Next() {
 		var b Balance
 		if err := rows.Scan(&b.LegalEntityID, &b.Code, &b.Name, &b.Kind, &b.Debit, &b.Credit, &b.Balance); err != nil {
