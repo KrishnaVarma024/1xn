@@ -187,6 +187,35 @@ test("sign-up keeps the GSTIN and the state in step, and says which is wrong", a
   await expect(page.getByTestId("owner-token")).toBeVisible();
 });
 
+test("Copy token works on a plain-http address, where the browser has no clipboard API", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // Opened as http://192.168.x.x:3000 (a phone, or the Network URL), the page
+  // is not a secure context, and browsers leave navigator.clipboard undefined.
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "clipboard", { get: () => undefined, configurable: true });
+  });
+  await page.goto("/sign-up");
+  await page.getByLabel("Restaurant name").fill("Plain HTTP Cafe");
+  await page.getByLabel("Your name").fill("Rishi");
+  await page.getByLabel("Mobile number").fill("99933 32221");
+  await page.getByLabel("First outlet").fill("HSR Layout");
+  await page.getByRole("button", { name: "Create restaurant" }).click();
+  const token = (await page.getByTestId("owner-token").textContent())!.trim();
+
+  await page.getByRole("button", { name: "Copy token" }).click(); // the old execCommand way
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+
+  // When even that is refused, the token is selected for Cmd+C, and the page says so.
+  await page.evaluate(() => {
+    document.execCommand = () => false;
+  });
+  await page.getByRole("button", { name: "Copied" }).click();
+  await expect(page.getByText("press ⌘C")).toBeVisible();
+  expect(await page.evaluate(() => window.getSelection()?.toString().trim())).toBe(token);
+  expect(errors).toEqual([]); // the crash the owner saw was an unhandled rejection here
+});
+
 test("a pasted token with a stray non-ASCII character is 'wrong', not 'API unreachable'", async ({ page }) => {
   await page.goto("/sign-in");
   // The placeholder itself ends in "…"; chat apps also add zero-width spaces.

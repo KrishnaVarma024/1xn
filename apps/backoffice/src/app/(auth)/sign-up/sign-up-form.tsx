@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useActionState, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import { FormMessage } from "@/components/forms";
 import { Button, Field, Input, Select, buttonClass } from "@/components/ui";
+import { copyText, selectText } from "@/lib/clipboard";
 import { STATES, stateName } from "@/lib/states";
 import { signUp, type SignUpState } from "../actions";
 
 export function SignUpForm() {
   const [state, action, pending] = useActionState<SignUpState, FormData>(signUp, undefined);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"no" | "yes" | "select">("no");
+  const tokenRef = useRef<HTMLElement>(null);
   const [stateCode, setStateCode] = useState("29");
 
   if (state?.token) {
@@ -21,20 +23,30 @@ export function SignUpForm() {
           on another computer.
         </p>
         <div className="rounded-lg border border-marigold-400/50 bg-marigold-50 p-3">
-          <code className="block break-all font-mono text-sm" data-testid="owner-token">
+          {/* select-all: one click selects the whole token, for copying by hand. */}
+          <code ref={tokenRef} className="block select-all break-all font-mono text-sm" data-testid="owner-token">
             {state.token}
           </code>
         </div>
+        {copied === "select" && (
+          <p role="status" className="text-sm text-ink-soft">
+            This browser would not copy from this address, so the token is selected: press ⌘C (Ctrl+C on Windows) to copy it.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
             type="button"
             onClick={async () => {
-              await navigator.clipboard.writeText(state.token!);
-              setCopied(true);
+              if (await copyText(state.token!)) {
+                setCopied("yes");
+              } else {
+                if (tokenRef.current) selectText(tokenRef.current);
+                setCopied("select");
+              }
             }}
           >
-            {copied ? "Copied" : "Copy token"}
+            {copied === "yes" ? "Copied" : "Copy token"}
           </Button>
           <Link href="/menu" className={buttonClass("primary")}>
             I saved it. Set up my menu

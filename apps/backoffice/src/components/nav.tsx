@@ -19,7 +19,9 @@ const links = [
 export function Nav() {
   const path = usePathname();
   return (
-    <nav aria-label="Main" className="flex gap-1 overflow-x-auto md:flex-col">
+    // A sideways-scrolling row on phones; on wider screens a plain column, with
+    // no scroll box (Safari left slivers of the old highlight in it).
+    <nav aria-label="Main" className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
       {links.map((l) => {
         const active = path === l.href || path.startsWith(l.href + "/") || (l.href === "/floor" && path.startsWith("/orders"));
         return (

@@ -97,3 +97,22 @@ test("S13 stock pages fit a phone screen without sideways scrolling", async ({ p
   }
   expect(wide, "pages wider than the phone").toEqual([]);
 });
+
+// Seen in Safari (3 Oct): a grey scrollbar beside the stock tabs. Each tab was
+// pulled down a pixel over the row's border, so the scrolling row overflowed
+// by one pixel and Safari, which shows scrollbars when a mouse is attached,
+// drew one. No scrolling box should overflow when nothing needs to scroll.
+test("the stock tabs and the sidebar do not overflow their scroll boxes", async ({ page, request }) => {
+  const o = await signUp(request, "Review Tab Overflow");
+  await signIn(page, o.token);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/stock");
+  const overflow = await page.evaluate(() =>
+    [...document.querySelectorAll("nav")].map((n) => ({
+      nav: n.getAttribute("aria-label"),
+      down: n.scrollHeight - n.clientHeight,
+      across: n.scrollWidth - n.clientWidth,
+    })),
+  );
+  expect(overflow.filter((n) => n.down > 0 || n.across > 0)).toEqual([]);
+});
