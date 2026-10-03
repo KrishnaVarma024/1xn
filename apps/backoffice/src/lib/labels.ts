@@ -76,6 +76,18 @@ export const alertText: Record<string, { title: string; help: string }> = {
     title: "A cash drawer did not match at the end of a shift",
     help: "The difference is booked to Cash over and short. Recount, and talk to the cashier if it repeats.",
   },
+  low_stock: {
+    title: "An ingredient went below its reorder level",
+    help: "Time to order more. The Stock page shows what is low.",
+  },
+  negative_stock: {
+    title: "More of an ingredient was used than was ever booked in",
+    help: "Usually a delivery that was not recorded. Record the purchase, or count the stock.",
+  },
+  stock_not_used: {
+    title: "A bill's ingredients could not be taken out of stock",
+    help: "Its quantities were far too large to hold. Check the dish's recipe and the bill.",
+  },
   cash_after_shift_close: {
     title: "A cash bill arrived after its shift's drawer was counted",
     help: "The shift's expected cash and difference were corrected, in the books too. Usually a till that was offline.",
@@ -92,6 +104,7 @@ export const alertText: Record<string, { title: string; help: string }> = {
 
 export const cashMoveLabel: Record<string, string> = {
   expense: "Paid out",
+  supplier: "Paid to supplier",
   to_safe: "To safe",
   from_safe: "From safe",
 };
@@ -142,4 +155,24 @@ export function since(iso: string, now = Date.now()): string {
 
 export function todayIST(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+}
+
+export const stockKindLabel: Record<string, string> = {
+  purchase: "Received",
+  sale: "Used by bills",
+  wastage: "Wasted",
+  count: "Count",
+  trueup: "Price correction",
+};
+
+export const paidByLabel: Record<string, string> = {
+  safe: "Cash from the safe",
+  till: "Cash from a till",
+  bank: "Bank",
+  credit: "On credit",
+};
+
+/** The trading day now in India: it starts at 04:00, like the API's. */
+export function tradingDayIST(now = Date.now()): string {
+  return new Date(now + 5.5 * 3600e3 - 4 * 3600e3).toISOString().slice(0, 10);
 }

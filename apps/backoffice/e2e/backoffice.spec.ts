@@ -178,7 +178,7 @@ test("a new restaurant signs up and builds its menu, tables and devices", async 
   await expect(page).toHaveURL(/\/sign-in$/);
 });
 
-test("a seeded evening: live floor, bills, a bill, day close, books and alerts", async ({ page }) => {
+test("a seeded evening: live floor, bills, a bill, day close, stock, books and alerts", async ({ page }) => {
   const out = execFileSync("go", ["run", "./cmd/seed"], { cwd: core, env: { ...process.env, API_URL: API }, encoding: "utf8" });
   const token = /onx_o_\S+/.exec(out)![0];
   const day = /business day (\d{4}-\d{2}-\d{2})/.exec(out)![1]; // after midnight, the evening is yesterday
@@ -210,9 +210,19 @@ test("a seeded evening: live floor, bills, a bill, day close, books and alerts",
   await expect(warnings).toContainText("3 orders are still open (R1, T1, T2)");
   await expect(page.locator("section", { hasText: "Invoice numbers" }).getByText("No gaps")).toBeVisible();
 
+  // The kitchen: curd ran low on the afternoon's bills; every dish is costed.
+  await page.goto("/stock");
+  await expect(page.getByTestId("stock-Curd")).toContainText("Low");
+  await expect(page.getByTestId("stock-Paneer")).toContainText("5 kg");
+  await page.goto("/recipes");
+  await expect(page.getByText("10 of 10")).toBeVisible();
+  await page.goto(`/stock/food-cost?from=${day}&to=${day}`);
+  await expect(page.getByText("₹1,580.00")).toBeVisible(); // food sales without GST
+
   await page.getByRole("link", { name: "Books" }).click();
   await expect(page.getByText("Balanced")).toBeVisible();
   await expect(page.getByText("Cash over and short")).toBeVisible();
+  await expect(page.getByText("Cost of food sold")).toBeVisible();
   await page.getByRole("link", { name: "Alerts" }).click();
   await expect(page.getByText("A cash drawer did not match at the end of a shift")).toBeVisible();
 });

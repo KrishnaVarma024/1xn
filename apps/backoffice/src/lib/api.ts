@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-type Options = { method?: "GET" | "POST" | "PATCH"; body?: unknown; token?: string | null };
+type Options = { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string | null };
 
 /**
  * api<T>("/v1/me") calls the API as the signed-in owner.

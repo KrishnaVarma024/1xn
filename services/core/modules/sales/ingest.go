@@ -28,6 +28,7 @@ import (
 	"1xn/core/modules/ledger"
 	"1xn/core/modules/orders"
 	"1xn/core/modules/sales/pricing"
+	"1xn/core/modules/stock"
 )
 
 // OpBillSettled is the op type devices send when a bill is paid and printed.
@@ -326,6 +327,14 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	// Cash on a bill that arrives after its shift was counted: the shift's
 	// expected cash and difference are corrected, in the books too.
 	if err := dayclose.LateCash(ctx, tx, a, billID, b.IssuedAt); err != nil {
+		return syncop.Applied{}, err
+	}
+	// The dishes' ingredients leave the store now, and their cost is booked.
+	sold := make([]stock.Sold, len(in.Lines))
+	for i, l := range in.Lines {
+		sold[i] = stock.Sold{ItemRef: l.Ref, Qty: l.Qty}
+	}
+	if err := stock.ConsumeForBill(ctx, tx, a.Device.TenantID, a.Device.OutletID, billID, bizDate, issued, sold); err != nil {
 		return syncop.Applied{}, err
 	}
 	// A bill for a day the owner already closed is kept (the guest paid; the

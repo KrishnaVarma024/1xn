@@ -6,6 +6,11 @@
 # build output
 /bin/
 /dist/
+# binaries from `go build ./cmd/...` run inside services/core
+/services/core/api
+/services/core/migrate
+/services/core/demo
+/services/core/seed
 *.test
 *.out
 coverage.*

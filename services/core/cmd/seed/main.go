@@ -188,6 +188,10 @@ func seed() (token, businessDay string, err error) {
 	}
 	fmt.Println("  menu: 10 dishes, 3 kitchen sections, 2 add-on groups")
 
+	if err := seedStock(owner, outlet, items, businessDay); err != nil {
+		return "", "", err
+	}
+
 	// Dining room.
 	tables := map[string]string{}
 	for _, fl := range []struct {
@@ -423,5 +427,95 @@ func call(method, path, token string, body, out any) error {
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
+	return nil
+}
+
+// seedStock stocks the kitchen: ingredients, a recipe for every dish, the
+// morning's deliveries from three suppliers, and some cream that went sour.
+// Curd is bought short, so the afternoon's bills take it under its reorder
+// level and raise a low-stock alert.
+func seedStock(owner, outlet string, items map[string]menuItem, day string) error {
+	post := func(path string, body any, out any) error { return call("POST", path, owner, body, out) }
+	type ingredient struct {
+		name, unit     string
+		reorder        int64 // milli-units
+		qty, cost      int64 // milli-units bought, paise paid
+		supplier, paid string
+	}
+	stock := []ingredient{
+		{"Paneer", "kg", 2_000, 5_000, 160_000, "Bandra Meat & Dairy", "credit"},
+		{"Chicken", "kg", 3_000, 10_000, 240_000, "Bandra Meat & Dairy", "credit"},
+		{"Butter", "kg", 1_000, 2_000, 100_000, "Bandra Meat & Dairy", "credit"},
+		{"Cream", "l", 1_000, 3_000, 60_000, "Bandra Meat & Dairy", "credit"},
+		{"Curd", "kg", 1_000, 1_200, 8_400, "Bandra Meat & Dairy", "credit"},
+		{"Milk", "l", 5_000, 10_000, 56_000, "Bandra Meat & Dairy", "credit"},
+		{"Basmati rice", "kg", 5_000, 10_000, 110_000, "Metro Wholesale", "bank"},
+		{"Maida flour", "kg", 5_000, 10_000, 45_000, "Metro Wholesale", "bank"},
+		{"Black dal", "kg", 2_000, 5_000, 70_000, "Metro Wholesale", "bank"},
+		{"Sugar", "kg", 1_000, 5_000, 22_500, "Metro Wholesale", "bank"},
+		{"Spice mix", "kg", 500, 1_000, 60_000, "Metro Wholesale", "bank"},
+		{"Cooking oil", "l", 5_000, 15_000, 210_000, "Metro Wholesale", "bank"},
+		{"Soda", "pc", 12_000, 24_000, 48_000, "Metro Wholesale", "bank"},
+		{"Onions", "kg", 5_000, 15_000, 45_000, "Sharma Vegetables", "safe"},
+		{"Tomatoes", "kg", 5_000, 10_000, 40_000, "Sharma Vegetables", "safe"},
+		{"Garlic", "kg", 500, 1_000, 24_000, "Sharma Vegetables", "safe"},
+		{"Lemons", "pc", 20_000, 50_000, 15_000, "Sharma Vegetables", "safe"},
+	}
+	stockIDs := map[string]string{}
+	purchases := map[string][]map[string]any{}
+	paidBy := map[string]string{}
+	var suppliers []string
+	for _, s := range stock {
+		var it ref
+		if err := post("/v1/stock/items", map[string]any{"name": s.name, "unit": s.unit, "reorder_level": s.reorder}, &it); err != nil {
+			return err
+		}
+		stockIDs[s.name] = it.ID
+		if _, ok := purchases[s.supplier]; !ok {
+			suppliers = append(suppliers, s.supplier)
+		}
+		purchases[s.supplier] = append(purchases[s.supplier], map[string]any{"stock_item_id": it.ID, "qty": s.qty, "cost": s.cost})
+		paidBy[s.supplier] = s.paid
+	}
+
+	// Per portion, in grams, millilitres or thousandths of a piece.
+	recipes := map[string][]any{
+		"Paneer tikka":    {"Paneer", 200, "Curd", 50, "Spice mix", 10, "Cooking oil", 15, "Onions", 50},
+		"Butter chicken":  {"Chicken", 250, "Butter", 30, "Cream", 50, "Tomatoes", 150, "Spice mix", 10, "Onions", 50},
+		"Butter naan":     {"Maida flour", 100, "Butter", 15, "Curd", 10},
+		"Garlic naan":     {"Maida flour", 100, "Butter", 15, "Garlic", 10},
+		"Sweet lassi":     {"Curd", 200, "Sugar", 30, "Milk", 50},
+		"Masala chaas":    {"Curd", 100, "Spice mix", 2},
+		"Chicken 65":      {"Chicken", 200, "Cooking oil", 50, "Spice mix", 15, "Curd", 20},
+		"Fresh lime soda": {"Lemons", 1_000, "Soda", 1_000, "Sugar", 20},
+		"Veg biryani":     {"Basmati rice", 150, "Onions", 60, "Cooking oil", 20, "Spice mix", 10, "Curd", 30},
+		"Dal makhani":     {"Black dal", 80, "Butter", 25, "Cream", 30, "Tomatoes", 50},
+	}
+	for dish, r := range recipes {
+		var lines []map[string]any
+		for i := 0; i < len(r); i += 2 {
+			lines = append(lines, map[string]any{"stock_item_id": stockIDs[r[i].(string)], "qty": r[i+1]})
+		}
+		if err := call("PUT", "/v1/stock/recipes/"+items[dish].ID, owner, map[string]any{"lines": lines}, nil); err != nil {
+			return fmt.Errorf("recipe for %s: %w", dish, err)
+		}
+	}
+
+	invoice := 101
+	for _, s := range suppliers {
+		if err := post("/v1/outlets/"+outlet+"/stock/purchases", map[string]any{
+			"id": ids.New(), "supplier": s, "invoice_no": fmt.Sprintf("INV-%d", invoice), "date": day,
+			"paid_by": paidBy[s], "lines": purchases[s],
+		}, nil); err != nil {
+			return err
+		}
+		invoice++
+	}
+	if err := post("/v1/outlets/"+outlet+"/stock/wastage", map[string]any{
+		"id": ids.New(), "stock_item_id": stockIDs["Cream"], "qty": 200, "reason": "Went sour in the walk-in", "date": day,
+	}, nil); err != nil {
+		return err
+	}
+	fmt.Println("  stock: 17 ingredients, recipes for every dish, 3 deliveries, 200 ml of cream wasted")
 	return nil
 }

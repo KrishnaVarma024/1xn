@@ -253,13 +253,15 @@ func lockShift(ctx context.Context, tx *sql.Tx, id uuid.UUID) (*shift, error) {
 type cashMoved struct {
 	MoveID      uuid.UUID `json:"move_id"`
 	ShiftID     uuid.UUID `json:"shift_id"`
-	Kind        string    `json:"kind"` // expense, to_safe, from_safe
+	Kind        string    `json:"kind"` // expense, to_safe, from_safe, supplier
 	AmountPaise int64     `json:"amount_paise"`
 	Reason      string    `json:"reason"`
 	At          time.Time `json:"at"`
 }
 
-var moveKinds = map[string]bool{"expense": true, "to_safe": true, "from_safe": true}
+// supplier: a delivery paid in cash from the drawer; the owner books the
+// delivery itself as received "paid from a till".
+var moveKinds = map[string]bool{"expense": true, "to_safe": true, "from_safe": true, "supplier": true}
 
 func applyCashMoved(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (syncop.Applied, error) {
 	var p cashMoved
@@ -274,7 +276,7 @@ func applyCashMoved(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (syn
 		return syncop.Applied{}, err
 	}
 	if !moveKinds[p.Kind] {
-		return syncop.Applied{}, reject("bad_payload", "kind must be expense, to_safe or from_safe")
+		return syncop.Applied{}, reject("bad_payload", "kind must be expense, supplier, to_safe or from_safe")
 	}
 	if p.AmountPaise < 1 || p.AmountPaise > maxCash {
 		return syncop.Applied{}, reject("bad_payload", "amount_paise must be positive")
@@ -507,12 +509,13 @@ func nullJSON(b []byte) any {
 
 // counted is what a drawer should hold.
 type counted struct {
-	CashSales, Expenses, ToSafe, FromSafe, Expected int64
+	CashSales, Expenses, Suppliers, ToSafe, FromSafe, Expected int64
 }
 
 // countShift works out what the drawer should hold at `until`: the opening
 // float, plus cash taken on this till's bills during the shift, plus cash
-// brought from the safe, minus expenses paid out and cash taken to the safe.
+// brought from the safe, minus expenses and suppliers paid out and cash taken
+// to the safe.
 //
 // Bills are matched to the shift by till and time. One till's clock is
 // consistent with itself, and its ops arrive in the order it made them, so
@@ -528,11 +531,12 @@ func countShift(ctx context.Context, tx *sql.Tx, s *shift, until time.Time) (cou
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT coalesce(sum(amount) FILTER (WHERE kind = 'expense'), 0),
+		       coalesce(sum(amount) FILTER (WHERE kind = 'supplier'), 0),
 		       coalesce(sum(amount) FILTER (WHERE kind = 'to_safe'), 0),
 		       coalesce(sum(amount) FILTER (WHERE kind = 'from_safe'), 0)
-		FROM cash_move WHERE shift_id = $1`, s.ID).Scan(&c.Expenses, &c.ToSafe, &c.FromSafe); err != nil {
+		FROM cash_move WHERE shift_id = $1`, s.ID).Scan(&c.Expenses, &c.Suppliers, &c.ToSafe, &c.FromSafe); err != nil {
 		return c, err
 	}
-	c.Expected = s.OpeningFloat + c.CashSales + c.FromSafe - c.Expenses - c.ToSafe
+	c.Expected = s.OpeningFloat + c.CashSales + c.FromSafe - c.Expenses - c.Suppliers - c.ToSafe
 	return c, nil
 }

@@ -186,6 +186,7 @@ export type Shift = {
   opening_float: number;
   cash_sales: number;
   expenses: number;
+  suppliers?: number; // absent in reports closed before supplier payouts existed
   to_safe: number;
   from_safe: number;
   expected: number;
@@ -254,7 +255,7 @@ export type ZReport = {
   cancelled: { orders: number; value: number };
   open_orders: { orders: number; value: number; tables: string[] };
   shifts: Shift[];
-  cash_moves: { shift_id: string; kind: "expense" | "to_safe" | "from_safe"; amount: number; reason: string; at: string }[];
+  cash_moves: { shift_id: string; kind: "expense" | "supplier" | "to_safe" | "from_safe"; amount: number; reason: string; at: string }[];
   cash: {
     floats: number;
     sales: number;
@@ -287,4 +288,76 @@ export type DayView = {
 export type DayList = {
   today: string;
   closed: { business_date: string; closed_at: string; closed_by: string; bills: number; grand_total: number; shifts: number; cash_difference: number }[];
+};
+
+// Stock and recipes. Quantities are milli-units of the item's unit.
+export type StockItem = {
+  id: string;
+  name: string;
+  unit: "kg" | "l" | "pc";
+  reorder_level: number;
+  active: boolean;
+  qty: number;
+  value: number;
+  unit_cost: number;
+  last_cost: number;
+  status: "ok" | "low" | "out" | "negative" | "new";
+};
+
+export type StockList = { items: StockItem[]; value: number };
+
+export type StockMove = {
+  doc_id: string;
+  kind: "purchase" | "sale" | "wastage" | "count" | "trueup";
+  qty: number;
+  value: number;
+  qty_after: number;
+  business_date: string;
+  at: string;
+  note?: string;
+  invoice_no?: string;
+};
+
+export type StockDoc = {
+  id: string;
+  kind: "purchase" | "sale" | "wastage" | "count";
+  business_date: string;
+  at: string;
+  supplier?: string;
+  invoice_no?: string;
+  paid_by?: "safe" | "till" | "bank" | "credit";
+  total: number;
+  note?: string;
+  ledger_status: "posted" | "blocked" | "none";
+  lines: number;
+};
+
+export type RecipeLine = { stock_item_id: string; name: string; unit: "kg" | "l" | "pc"; qty: number; unit_cost: number; cost: number };
+
+export type Dish = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  net_price: number;
+  lines: RecipeLine[];
+  cost: number;
+  food_cost_bp: number;
+  margin: number;
+  uncosted: number;
+};
+
+export type FoodCost = {
+  from: string;
+  to: string;
+  food_sales: number;
+  food_cost: number;
+  food_cost_bp: number;
+  wastage: number;
+  count_differences: number;
+  total_cost: number;
+  total_cost_bp: number;
+  purchases: number;
+  portions_without_recipe: number;
+  dishes: { id: string; name: string; qty: number; has_recipe: boolean; cost: number }[];
 };

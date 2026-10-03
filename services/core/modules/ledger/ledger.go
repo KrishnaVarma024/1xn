@@ -32,7 +32,11 @@ const (
 	AcctUPI           = "1110"
 	AcctCard          = "1120"
 	AcctReceivable    = "1130"
+	AcctBank          = "1140"
+	AcctTillPayouts   = "1150"
 	AcctSuspense      = "1190"
+	AcctStock         = "1300"
+	AcctPayables      = "2100"
 	AcctOutputCGST    = "2210"
 	AcctOutputSGST    = "2220"
 	AcctOutputIGST    = "2230"
@@ -40,6 +44,9 @@ const (
 	AcctSales         = "4100"
 	AcctServiceCharge = "4200"
 	AcctRoundOff      = "4900"
+	AcctFoodCost      = "5100"
+	AcctWastage       = "5110"
+	AcctCountDiff     = "5120"
 	AcctPettyExpenses = "5200"
 	AcctCashOverShort = "5900"
 )
@@ -50,7 +57,11 @@ var defaultChart = []struct{ code, name, kind string }{
 	{AcctUPI, "UPI clearing", "asset"},
 	{AcctCard, "Card clearing", "asset"},
 	{AcctReceivable, "Customer credit (receivable)", "asset"},
+	{AcctBank, "Bank account", "asset"},
+	{AcctTillPayouts, "Supplier payments from tills (to match)", "asset"},
 	{AcctSuspense, "Payment differences (suspense)", "asset"},
+	{AcctStock, "Stock (food and beverage)", "asset"},
+	{AcctPayables, "Payable to suppliers", "liability"},
 	{AcctOutputCGST, "Output CGST", "liability"},
 	{AcctOutputSGST, "Output SGST", "liability"},
 	{AcctOutputIGST, "Output IGST", "liability"},
@@ -58,6 +69,9 @@ var defaultChart = []struct{ code, name, kind string }{
 	{AcctSales, "Food and beverage sales", "income"},
 	{AcctServiceCharge, "Service charge income", "income"},
 	{AcctRoundOff, "Round-off", "income"},
+	{AcctFoodCost, "Cost of food sold", "expense"},
+	{AcctWastage, "Food wastage", "expense"},
+	{AcctCountDiff, "Stock count differences", "expense"},
 	{AcctPettyExpenses, "Petty cash expenses", "expense"},
 	{AcctCashOverShort, "Cash over and short", "expense"},
 }
@@ -195,6 +209,34 @@ func openPeriod(ctx context.Context, tx *sql.Tx, tenantID, legalEntityID uuid.UU
 		return uuid.Nil, ErrPeriodLocked
 	}
 	return id, nil
+}
+
+// EnsureOpen creates the period of date's month if it does not exist and
+// checks it is open (ErrPeriodLocked otherwise). A transaction that will lock
+// other rows (stock balances) calls it first, so every transaction touches
+// the period row before anything else: two of them can then never wait on
+// each other in a circle.
+func EnsureOpen(ctx context.Context, tx *sql.Tx, tenantID, legalEntityID uuid.UUID, date time.Time) error {
+	_, err := openPeriod(ctx, tx, tenantID, legalEntityID, date)
+	return err
+}
+
+// FirstOpenDate is date if its month is open, or else the first day of the
+// first open month after it: where a late correction is booked when the
+// month it belongs to has been locked by the accountant.
+func FirstOpenDate(ctx context.Context, tx *sql.Tx, tenantID, legalEntityID uuid.UUID, date time.Time) (time.Time, error) {
+	d := date
+	for i := 0; i < 120; i++ {
+		_, err := openPeriod(ctx, tx, tenantID, legalEntityID, d)
+		if err == nil {
+			return d, nil
+		}
+		if !errors.Is(err, ErrPeriodLocked) {
+			return time.Time{}, err
+		}
+		d = time.Date(d.Year(), d.Month()+1, 1, 12, 0, 0, 0, d.Location())
+	}
+	return time.Time{}, ErrPeriodLocked
 }
 
 func accountIDs(ctx context.Context, tx *sql.Tx, legalEntityID uuid.UUID, lines []Line) (map[string]uuid.UUID, error) {

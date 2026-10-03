@@ -175,6 +175,7 @@ type Shift struct {
 	OpeningFloat int64      `json:"opening_float"`
 	CashSales    int64      `json:"cash_sales"`
 	Expenses     int64      `json:"expenses"`
+	Suppliers    int64      `json:"suppliers"` // deliveries paid from the drawer
 	ToSafe       int64      `json:"to_safe"`
 	FromSafe     int64      `json:"from_safe"`
 	Expected     int64      `json:"expected"`             // for an open shift: so far
@@ -197,6 +198,7 @@ type Cash struct {
 	Floats        int64 `json:"floats"`
 	Sales         int64 `json:"sales"`
 	Expenses      int64 `json:"expenses"`
+	Suppliers     int64 `json:"suppliers"`
 	ToSafe        int64 `json:"to_safe"`
 	FromSafe      int64 `json:"from_safe"`
 	Expected      int64 `json:"expected"`
@@ -658,6 +660,8 @@ func shiftsOfDay(ctx context.Context, tx *sql.Tx, r *Report, d string, now time.
 		switch m.Kind {
 		case "expense":
 			s.Expenses += m.Amount
+		case "supplier":
+			s.Suppliers += m.Amount
 		case "to_safe":
 			s.ToSafe += m.Amount
 		case "from_safe":
@@ -682,6 +686,7 @@ func shiftsOfDay(ctx context.Context, tx *sql.Tx, r *Report, d string, now time.
 		c.Floats += s.OpeningFloat
 		c.Sales += s.CashSales
 		c.Expenses += s.Expenses
+		c.Suppliers += s.Suppliers
 		c.ToSafe += s.ToSafe
 		c.FromSafe += s.FromSafe
 		c.Expected += s.Expected

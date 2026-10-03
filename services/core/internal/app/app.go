@@ -22,13 +22,14 @@ import (
 	"1xn/core/modules/ledger"
 	"1xn/core/modules/orders"
 	"1xn/core/modules/sales"
+	"1xn/core/modules/stock"
 	"1xn/core/modules/syncgw"
 )
 
 // New returns the API handler.
 //
 //	Public:  POST /v1/signup, POST /v1/devices/register, GET /healthz, GET /readyz
-//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders|days, /v1/catalogue/*,
+//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders|days|stock, /v1/catalogue/*, /v1/stock/*,
 //	         /v1/orders/{id}, /v1/bills/{id}, /v1/ledger/trial-balance, /v1/alerts
 //	Device:  GET /v1/devices/me/menu, POST /v1/sync/push, GET /v1/sync/pull
 func New(d *sql.DB) http.Handler {
@@ -75,12 +76,14 @@ func New(d *sql.DB) http.Handler {
 				r.Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
 				r.Get("/orders", orders.OpenOrdersHandler(d))
 				r.Mount("/days", dayclose.Routes(d))
+				r.Mount("/stock", stock.OutletRoutes(d))
 			})
 			r.Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))
 			r.Get("/orders/{orderID}", orders.GetOrderHandler(d))
 			r.Mount("/catalogue", catalogue.OwnerRoutes(d))
 			r.Mount("/bills", sales.Routes(d))
 			r.Mount("/ledger", ledger.Routes(d))
+			r.Mount("/stock", stock.OwnerRoutes(d))
 			r.Mount("/alerts", alerts.Routes(d))
 		})
 

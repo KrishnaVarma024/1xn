@@ -372,7 +372,7 @@ function Drawers({ r }: { r: ZReport }) {
               </td>
               <td className={`${td} text-right`}>{formatPaise(s.opening_float)}</td>
               <td className={`${td} text-right`}>{formatPaise(s.cash_sales)}</td>
-              <td className={`${td} text-right`}>{s.expenses ? `− ${formatPaise(s.expenses)}` : "—"}</td>
+              <td className={`${td} text-right`}>{paidOut(s) ? `− ${formatPaise(paidOut(s))}` : "—"}</td>
               <td className={`${td} text-right`}>{safe(s)}</td>
               <td className={`${td} text-right font-medium`}>{formatPaise(s.expected)}</td>
               <td className={`${td} text-right`}>{s.counted === undefined ? <Badge tone="warn">Open</Badge> : formatPaise(s.counted)}</td>
@@ -388,6 +388,11 @@ function Drawers({ r }: { r: ZReport }) {
       )}
     </>
   );
+}
+
+/** Expenses and suppliers paid from the drawer. Reports closed before supplier payouts existed have no `suppliers`. */
+function paidOut(s: Shift): number {
+  return s.expenses + (s.suppliers ?? 0);
 }
 
 function safe(s: Shift): string {

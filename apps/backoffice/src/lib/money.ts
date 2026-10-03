@@ -25,12 +25,22 @@ export function formatPrice(paise: number): string {
  * Returns null for anything else: negatives, more than two decimals, junk.
  */
 export function parseRupees(input: string): number | null {
-  const s = input.trim().replace(/^₹\s*/, "").replaceAll(",", "");
-  const m = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(s);
+  const s = input.trim().replace(/^₹\s*/, "");
+  const m = new RegExp(`^(${WHOLE})(?:\\.(\\d{1,2}))?$`).exec(s);
   if (!m) return null;
-  const paise = Number(m[1]) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+  const whole = m[1].replaceAll(",", "");
+  if (whole.length > 9) return null;
+  const paise = Number(whole) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
   return Number.isSafeInteger(paise) ? paise : null;
 }
+
+/**
+ * A whole number as people write it: plain digits, or grouped with commas
+ * the Indian way (1,20,000) or the international way (120,000). The last
+ * group always has three digits, so "1,50" (a decimal comma) is not a
+ * number here: it is refused, never read as 150.
+ */
+export const WHOLE = String.raw`\d+|\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3}`;
 
 /** paise to the plain rupee string an input box shows: 32050 -> "320.50" */
 export function paiseToInput(paise: number): string {

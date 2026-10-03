@@ -112,6 +112,7 @@ func PostBillSettled(ctx context.Context, tx *sql.Tx, b BillSettled) (uuid.UUID,
 //	expense     Dr petty cash expenses   Cr cash in hand
 //	to_safe     Dr cash in safe          Cr cash in hand
 //	from_safe   Dr cash in hand          Cr cash in safe
+//	supplier    Dr till payouts (1150)   Cr cash in hand
 func CashMoveEntry(tenantID, legalEntityID, outletID, moveID uuid.UUID, kind string, amount int64,
 	at time.Time, businessDate time.Time, reason string) (Entry, error) {
 	outlet := outletID
@@ -124,6 +125,10 @@ func CashMoveEntry(tenantID, legalEntityID, outletID, moveID uuid.UUID, kind str
 		lines = []Line{line(AcctCashSafe, amount), line(AcctCash, -amount)}
 	case "from_safe":
 		lines = []Line{line(AcctCash, amount), line(AcctCashSafe, -amount)}
+	case "supplier":
+		// A delivery paid from the drawer. The delivery itself (and its cost)
+		// is booked when the owner receives it, against the same account.
+		lines = []Line{line(AcctTillPayouts, amount), line(AcctCash, -amount)}
 	default:
 		return Entry{}, fmt.Errorf("ledger: unknown cash move kind %q", kind)
 	}
@@ -169,4 +174,73 @@ func ShiftAdjustEntry(tenantID, legalEntityID, outletID, billID uuid.UUID, adjus
 	e.SourceType = "shift_adjust"
 	e.Memo = "Cash bill that reached the server after its shift was counted"
 	return e
+}
+
+// Stock posting rules. Stock is perpetual: it is an asset (1300) while it sits
+// in the store, and becomes a cost the moment it is used, lost or found
+// missing. So the food cost of any day is in the books that day, not only
+// after a month-end count.
+
+// paidBy is how a purchase was paid: cash from the safe, cash from a till
+// drawer (the till records the payout; account 1150 matches the two), from
+// the bank, or on credit from the supplier (a payable to settle later).
+var paidBy = map[string]string{"safe": AcctCashSafe, "till": AcctTillPayouts, "bank": AcctBank, "credit": AcctPayables}
+
+// StockPurchaseEntry books goods received.
+//
+//	Dr stock (1300)               cost - trueUp
+//	Dr cost of food sold (5100)   trueUp
+//	Cr cash / bank / suppliers    cost
+//
+// trueUp corrects stock that was used before it was booked in (the outlet
+// sold more than it held): it was costed at the last known price, and now
+// the real price is known. Usually zero.
+func StockPurchaseEntry(tenantID, legalEntityID, outletID, docID uuid.UUID, cost, trueUp int64, paid string,
+	date, businessDate time.Time, memo string) (Entry, error) {
+	acct, ok := paidBy[paid]
+	if !ok {
+		return Entry{}, fmt.Errorf("ledger: unknown payment %q for a purchase", paid)
+	}
+	outlet := outletID
+	bd := businessDate
+	return Entry{
+		TenantID: tenantID, LegalEntityID: legalEntityID, SourceType: "stock_purchase", SourceEventID: docID,
+		EntryDate: date, BusinessDate: &bd, Memo: memo,
+		Lines: []Line{
+			{AccountCode: AcctStock, Amount: cost - trueUp, OutletID: &outlet},
+			{AccountCode: AcctFoodCost, Amount: trueUp, OutletID: &outlet},
+			{AccountCode: acct, Amount: -cost, OutletID: &outlet},
+		},
+	}, nil
+}
+
+// StockOutEntry books stock that left the store at its value: used by bills
+// (cost of food sold), thrown away (wastage), or missing at a count (count
+// differences). A negative value is stock found, and flips the signs.
+//
+//	Dr expense   value
+//	Cr stock     value
+func StockOutEntry(tenantID, legalEntityID, outletID, docID uuid.UUID, kind string, value int64,
+	date, businessDate time.Time, memo string) (Entry, error) {
+	var acct, source string
+	switch kind {
+	case "sale":
+		acct, source = AcctFoodCost, "stock_sale"
+	case "wastage":
+		acct, source = AcctWastage, "stock_wastage"
+	case "count":
+		acct, source = AcctCountDiff, "stock_count"
+	default:
+		return Entry{}, fmt.Errorf("ledger: unknown stock use %q", kind)
+	}
+	outlet := outletID
+	bd := businessDate
+	return Entry{
+		TenantID: tenantID, LegalEntityID: legalEntityID, SourceType: source, SourceEventID: docID,
+		EntryDate: date, BusinessDate: &bd, Memo: memo,
+		Lines: []Line{
+			{AccountCode: acct, Amount: value, OutletID: &outlet},
+			{AccountCode: AcctStock, Amount: -value, OutletID: &outlet},
+		},
+	}, nil
 }

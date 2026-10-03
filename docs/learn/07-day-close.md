@@ -20,12 +20,13 @@
                                                      alert cash_difference (critical above ₹500)
 ```
 
-Four things make this safe:
+Five things make this safe:
 
 1. **Cash sales are found by till and time.** A shift's cash sales are the cash payments on that till's bills between `opened_at` and `closed_at`. One till's clock is consistent with itself, and its ops arrive in the order it made them, so every bill of the shift is in before its `shift.closed` op.
 2. **Shifts of one till never overlap.** A second `shift.opened` while one is open is refused (`shift_already_open`), and so is one that opens before the last one closed (`shift_overlaps`). So a bill belongs to at most one shift, and no rupee is counted twice.
-3. **The count is checked.** If the till sends the notes and coins (`{"500": 2, "50": 1, "20": 1}`), they must add up to the counted amount, and only real Indian denominations are accepted.
-4. **The difference is booked, not hidden.** Over or short, it posts to account 5900 Cash over and short, so the books always match the cash that is really there.
+3. **Every payout is a cash move.** Expenses, cash to and from the safe, and suppliers paid from the drawer (`supplier`, matched with the owner's delivery through account 1150, note 08) all change what the drawer should hold.
+4. **The count is checked.** If the till sends the notes and coins (`{"500": 2, "50": 1, "20": 1}`), they must add up to the counted amount, and only real Indian denominations are accepted.
+5. **The difference is booked, not hidden.** Over or short, it posts to account 5900 Cash over and short, so the books always match the cash that is really there.
 
 ## The trading day starts at 04:00
 
