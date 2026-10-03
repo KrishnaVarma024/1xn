@@ -6,7 +6,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const { me, outlet } = await getContext();
   return (
     <div className="min-h-screen md:flex">
-      <aside className="border-b border-line bg-white md:sticky md:top-0 md:h-screen md:w-60 md:shrink-0 md:border-b-0 md:border-r">
+      <aside className="border-b border-line bg-white print:hidden md:sticky md:top-0 md:h-screen md:w-60 md:shrink-0 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between gap-3 px-4 py-4 md:block">
           <div className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-neel-700 text-xs font-bold text-white">1x</span>
@@ -31,7 +31,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </form>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-6 sm:px-8 sm:py-8">
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-8 sm:py-8 print:p-0">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
     </div>

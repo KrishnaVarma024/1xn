@@ -16,6 +16,7 @@ import (
 	"1xn/core/internal/platform/httpx"
 	"1xn/core/internal/platform/syncop"
 	"1xn/core/modules/catalogue"
+	"1xn/core/modules/dayclose"
 	"1xn/core/modules/devices"
 	"1xn/core/modules/identity"
 	"1xn/core/modules/ledger"
@@ -27,12 +28,15 @@ import (
 // New returns the API handler.
 //
 //	Public:  POST /v1/signup, POST /v1/devices/register, GET /healthz, GET /readyz
-//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders, /v1/catalogue/*,
+//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders|days, /v1/catalogue/*,
 //	         /v1/orders/{id}, /v1/bills/{id}, /v1/ledger/trial-balance, /v1/alerts
 //	Device:  GET /v1/devices/me/menu, POST /v1/sync/push, GET /v1/sync/pull
 func New(d *sql.DB) http.Handler {
 	appliers := map[string]syncop.Applier{sales.OpBillSettled: sales.ApplySettledBill}
 	for op, fn := range orders.Appliers() {
+		appliers[op] = fn
+	}
+	for op, fn := range dayclose.Appliers() {
 		appliers[op] = fn
 	}
 	gw := &syncgw.Gateway{DB: d, Appliers: appliers}
@@ -70,6 +74,7 @@ func New(d *sql.DB) http.Handler {
 				r.Post("/tables", catalogue.CreateTableHandler(d))
 				r.Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
 				r.Get("/orders", orders.OpenOrdersHandler(d))
+				r.Mount("/days", dayclose.Routes(d))
 			})
 			r.Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))
 			r.Get("/orders/{orderID}", orders.GetOrderHandler(d))

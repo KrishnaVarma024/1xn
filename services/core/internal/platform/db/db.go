@@ -62,6 +62,22 @@ func InTenantReadTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(
 	return runTxOpts(ctx, d, tenantID, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, fn)
 }
 
+// InTenantSnapshotTx is InTenantTx at REPEATABLE READ: every query in fn sees
+// the same snapshot, and fn may write. Closing a day uses it, so the report
+// it stores is exactly the report it checked. Serialization failures are
+// retried like deadlocks.
+func InTenantSnapshotTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(tx *sql.Tx) error) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = runTxOpts(ctx, d, tenantID, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, fn)
+		if !retryable(err) {
+			return err
+		}
+		time.Sleep(time.Duration(10*(attempt+1)) * time.Millisecond)
+	}
+	return err
+}
+
 func runTx(ctx context.Context, d *sql.DB, tenantID uuid.UUID, fn func(tx *sql.Tx) error) (err error) {
 	return runTxOpts(ctx, d, tenantID, nil, fn)
 }
@@ -84,6 +100,10 @@ func runTxOpts(ctx context.Context, d *sql.DB, tenantID uuid.UUID, opts *sql.TxO
 	}
 	return tx.Commit()
 }
+
+// Retryable reports an error that the transaction helpers retry. When it
+// still comes back from one, every retry lost to concurrent writes.
+func Retryable(err error) bool { return retryable(err) }
 
 // retryable reports Postgres errors that mean "try the whole transaction
 // again": 40001 serialization_failure and 40P01 deadlock_detected.

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Badge, EmptyState, Input, PageHeader, Stat, Table, buttonClass, td, th } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getContext } from "@/lib/context";
+import { isRealDay, longDate } from "@/lib/dates";
 import { channelLabel, methodLabel, timeIST, todayIST } from "@/lib/labels";
 import { formatPaise } from "@/lib/money";
 import type { DayBills } from "@/lib/types";
@@ -20,7 +21,7 @@ export default async function BillsPage({ searchParams }: PageProps<"/bills">) {
     <>
       <PageHeader
         title="Bills"
-        subtitle={`Business day ${new Date(day + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`}
+        subtitle={`Business day ${longDate(day)}`}
         actions={
           <form className="flex items-center gap-2" aria-label="Pick a day">
             <Input type="date" name="date" defaultValue={day} max={todayIST()} aria-label="Business day" />
@@ -91,12 +92,4 @@ export default async function BillsPage({ searchParams }: PageProps<"/bills">) {
       )}
     </>
   );
-}
-
-// "2026-02-30" and "0000-01-01" match YYYY-MM-DD but are not days we keep.
-function isRealDay(d: unknown): d is string {
-  if (typeof d !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  const t = new Date(`${d}T00:00:00Z`);
-  const year = Number(d.slice(0, 4));
-  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d && year >= 2017 && year <= 2100;
 }

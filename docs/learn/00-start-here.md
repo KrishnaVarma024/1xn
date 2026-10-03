@@ -12,6 +12,7 @@ The notes in this folder explain *why* the code looks the way it does. Read them
 | [04 The double-entry ledger](04-double-entry-ledger.md) | debits, credits, posting rules, and why the database polices the books |
 | [05 Orders, tables, KOTs and conflicts](05-orders-and-conflicts.md) | pure reducers, conflict rules for offline devices, tombstones, lock order, state-based pull |
 | [06 The back office](06-back-office.md) | Backend-for-Frontend, Server Components and Server Actions, httpOnly cookies, browser tests |
+| [07 Day close](07-day-close.md) | cash shifts, expected vs counted cash, the Z report, optimistic concurrency with a digest, late records, pruning a change log |
 
 ## The life of one bill
 
@@ -49,7 +50,7 @@ Everything between BEGIN and COMMIT happens or none of it does. That one propert
 
 1. `services/core/modules/sales/pricing/engine.go`: the pure pricing engine. No database, no HTTP.
 2. `packages/golden/tax/cases.json`: what the engine must answer, case by case.
-3. `services/core/migrations/0001_platform.sql` to `0007_orders.sql`: the data model. The comments explain the rules.
+3. `services/core/migrations/0001_platform.sql` to `0008_day_close.sql`: the data model. The comments explain the rules.
 4. `services/core/internal/platform/db/db.go`: `InTenantTx`, the heart of multi-tenancy.
 5. `services/core/modules/identity/identity.go`: signup, one transaction.
 6. `services/core/modules/devices/devices.go`: pairing and invoice series.
@@ -57,8 +58,9 @@ Everything between BEGIN and COMMIT happens or none of it does. That one propert
 8. `services/core/modules/sales/ingest.go`: what happens to a bill.
 9. `services/core/modules/ledger/rules.go` then `ledger.go`: posting rules and posting.
 10. `services/core/modules/orders/domain.go`: the order reducer, then `store.go`, `apply.go`, `billing.go` and `http.go` (pull).
-11. `services/core/internal/e2e/*_test.go`: the whole thing exercised against real Postgres.
-12. `apps/backoffice/src/lib/api.ts`, then `src/app/(app)/menu/page.tsx` and `menu/actions.ts`: how a screen reads and writes through the API.
+11. `services/core/modules/dayclose/shifts.go` then `report.go` and `http.go`: drawers, the Z report and closing a day.
+12. `services/core/internal/e2e/*_test.go`: the whole thing exercised against real Postgres.
+13. `apps/backoffice/src/lib/api.ts`, then `src/app/(app)/menu/page.tsx` and `menu/actions.ts`: how a screen reads and writes through the API.
 
 ## How we test
 
@@ -70,7 +72,7 @@ Everything between BEGIN and COMMIT happens or none of it does. That one propert
 | Oracle | An independent Python engine must agree with the golden files | `tools/golden/oracle.py` |
 | End to end | The real API on a real Postgres, as the real non-owner role | `internal/e2e` |
 
-Each slice also goes through an adversarial review by a second agent. The first review found eight real issues, the worst being a comped bill that blocked a till's sync forever; each fix has a regression test in `internal/e2e/hardening_test.go`. The orders review found eight more, plus three smaller ones (note 05 has the story), and the back office review found thirteen (note 06).
+Each slice also goes through an adversarial review by a second agent. The first review found eight real issues, the worst being a comped bill that blocked a till's sync forever; each fix has a regression test in `internal/e2e/hardening_test.go`. The orders review found eight more, plus three smaller ones (note 05 has the story), the back office review found thirteen (note 06), and the day close review found ten, among them a void that could vanish from every report (note 07).
 
 A test is only useful if it fails when the code is wrong. While building this slice we checked that. We removed the device row lock in `syncgw`, and `TestConcurrentRetriesApplyOnce` failed with 503s. We restored the lock, and it passed again. Try the same trick on any test you doubt.
 

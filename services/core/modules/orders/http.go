@@ -37,7 +37,9 @@ const maxPull = 200
 //	after = 0: bootstrap. All OPEN orders of the device's outlet, and the
 //	           tenant's current sequence as the cursor.
 //	after > 0: every order of the outlet changed after the cursor, oldest
-//	           change first, each once, at most limit per page.
+//	           change first, each once, at most limit per page. A cursor
+//	           older than the pruned part of the change log gets 410
+//	           cursor_expired: bootstrap again.
 //
 // The read runs at REPEATABLE READ, so the orders and the cursor come from
 // the same snapshot. Sequence numbers are handed out in commit order, so a
@@ -68,7 +70,32 @@ func PullHandler(d *sql.DB) http.HandlerFunc {
 			if after == 0 {
 				return bootstrap(r.Context(), tx, p.TenantID, dev.OutletID, &res)
 			}
-			return changesSince(r.Context(), tx, p.TenantID, dev.OutletID, after, limit, &res)
+			// Changes at or below the floor may have been pruned. A device that
+			// far behind would silently miss them, so it must start afresh.
+			var floor int64
+			if err := tx.QueryRowContext(r.Context(),
+				`SELECT coalesce((SELECT change_log_floor FROM sync_state WHERE tenant_id = $1), 0)`, p.TenantID).Scan(&floor); err != nil {
+				return err
+			}
+			if after < floor {
+				return httpx.E(http.StatusGone, "cursor_expired",
+					"this device was offline too long to catch up; pull again with after=0 to start afresh")
+			}
+			if err := changesSince(r.Context(), tx, p.TenantID, dev.OutletID, after, limit, &res); err != nil || res.HasMore {
+				return err
+			}
+			// Caught up: move the cursor to the tenant's latest seq, even if this
+			// outlet had no changes. Seqs are handed out in commit order, so every
+			// change at or below last_seq is in this snapshot and was sent. A
+			// device at a quiet outlet then stays above the prune floor, which is
+			// per tenant, instead of being told to start afresh.
+			var last int64
+			if err := tx.QueryRowContext(r.Context(),
+				`SELECT coalesce((SELECT last_seq FROM sync_state WHERE tenant_id = $1), 0)`, p.TenantID).Scan(&last); err != nil {
+				return err
+			}
+			res.Cursor = max(res.Cursor, last)
+			return nil
 		})
 		if err != nil {
 			httpx.Fail(w, r, err)

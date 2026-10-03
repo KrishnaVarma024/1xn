@@ -105,3 +105,68 @@ func PostBillSettled(ctx context.Context, tx *sql.Tx, b BillSettled) (uuid.UUID,
 	id, err := Post(ctx, tx, e)
 	return id, diff, err
 }
+
+// CashMoveEntry is the posting rule for cash that leaves or enters a till
+// drawer other than through a sale. "Cash in hand" is the drawer.
+//
+//	expense     Dr petty cash expenses   Cr cash in hand
+//	to_safe     Dr cash in safe          Cr cash in hand
+//	from_safe   Dr cash in hand          Cr cash in safe
+func CashMoveEntry(tenantID, legalEntityID, outletID, moveID uuid.UUID, kind string, amount int64,
+	at time.Time, businessDate time.Time, reason string) (Entry, error) {
+	outlet := outletID
+	line := func(code string, a int64) Line { return Line{AccountCode: code, Amount: a, OutletID: &outlet} }
+	var lines []Line
+	switch kind {
+	case "expense":
+		lines = []Line{line(AcctPettyExpenses, amount), line(AcctCash, -amount)}
+	case "to_safe":
+		lines = []Line{line(AcctCashSafe, amount), line(AcctCash, -amount)}
+	case "from_safe":
+		lines = []Line{line(AcctCash, amount), line(AcctCashSafe, -amount)}
+	default:
+		return Entry{}, fmt.Errorf("ledger: unknown cash move kind %q", kind)
+	}
+	bd := businessDate
+	return Entry{
+		TenantID: tenantID, LegalEntityID: legalEntityID, SourceType: "cash_move", SourceEventID: moveID,
+		EntryDate: at, BusinessDate: &bd, Memo: fmt.Sprintf("Cash %s: %s", kind, reason), Lines: lines,
+	}, nil
+}
+
+// CashDifferenceEntry books what the counted drawer differs from what it
+// should hold, when a shift closes. difference = counted - expected.
+//
+//	over  (+)   Dr cash in hand          Cr cash over and short
+//	short (-)   Dr cash over and short   Cr cash in hand
+//
+// One formula covers both: the signs flip with the difference. The books then
+// show the cash that is really there, and the loss (or gain) where an owner
+// will see it.
+func CashDifferenceEntry(tenantID, legalEntityID, outletID, shiftID uuid.UUID, difference int64,
+	closedAt time.Time, businessDate time.Time) Entry {
+	outlet := outletID
+	bd := businessDate
+	return Entry{
+		TenantID: tenantID, LegalEntityID: legalEntityID, SourceType: "shift_close", SourceEventID: shiftID,
+		EntryDate: closedAt, BusinessDate: &bd, Memo: "Cash counted at shift close",
+		Lines: []Line{
+			{AccountCode: AcctCash, Amount: difference, OutletID: &outlet},
+			{AccountCode: AcctCashOverShort, Amount: -difference, OutletID: &outlet},
+		},
+	}
+}
+
+// ShiftAdjustEntry corrects a closed shift's cash difference when a cash bill
+// of that shift reaches the server after the drawer was counted. The cash was
+// in the drawer when it was counted, so the count stands; what the drawer
+// should have held goes up by the bill, and the difference moves by
+// `adjustment` (negative: less over, or more short). Same signs as
+// CashDifferenceEntry; the bill's id names the event.
+func ShiftAdjustEntry(tenantID, legalEntityID, outletID, billID uuid.UUID, adjustment int64,
+	at time.Time, businessDate time.Time) Entry {
+	e := CashDifferenceEntry(tenantID, legalEntityID, outletID, billID, adjustment, at, businessDate)
+	e.SourceType = "shift_adjust"
+	e.Memo = "Cash bill that reached the server after its shift was counted"
+	return e
+}

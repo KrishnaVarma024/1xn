@@ -173,3 +173,118 @@ export type Account = {
 };
 
 export type TrialBalance = { accounts: Account[]; total: number; balanced: boolean };
+
+// Day close (Z report). See services/core/modules/dayclose.
+export type Shift = {
+  id: string;
+  device_id: string;
+  device_name: string;
+  opened_by: string;
+  opened_at: string;
+  closed_by?: string;
+  closed_at?: string;
+  opening_float: number;
+  cash_sales: number;
+  expenses: number;
+  to_safe: number;
+  from_safe: number;
+  expected: number;
+  counted?: number;
+  difference?: number;
+  ledger_status?: string;
+};
+
+export type ZReport = {
+  outlet_id: string;
+  outlet_name: string;
+  business_date: string;
+  from: string;
+  to: string;
+  generated_at: string;
+  sales: {
+    bills: number;
+    covers: number;
+    first_at?: string;
+    last_at?: string;
+    subtotal: number;
+    discounts: number;
+    service_charge: number;
+    taxable: number;
+    cgst: number;
+    sgst: number;
+    igst: number;
+    tax: number;
+    round_off: number;
+    grand_total: number;
+    tips: number;
+    avg_bill: number;
+    avg_cover: number;
+  };
+  tax_by_rate: { rate_bp: number; taxable: number; cgst: number; sgst: number; igst: number }[];
+  payments: { method: string; bills: number; amount: number }[];
+  channels: { channel: string; bills: number; grand_total: number }[];
+  series: {
+    device_id: string;
+    device_name: string;
+    fy: string;
+    first: string;
+    last: string;
+    count: number;
+    continues_from?: string;
+    missing: string[];
+    missing_count: number;
+  }[];
+  voids: {
+    lines: number;
+    value: number;
+    fired: number;
+    list: {
+      order_id: string;
+      table?: string;
+      name: string;
+      qty: number;
+      value: number;
+      reason: string;
+      approved_by?: string;
+      at: string;
+      fired: boolean;
+      cancelled: boolean;
+    }[];
+  };
+  cancelled: { orders: number; value: number };
+  open_orders: { orders: number; value: number; tables: string[] };
+  shifts: Shift[];
+  cash_moves: { shift_id: string; kind: "expense" | "to_safe" | "from_safe"; amount: number; reason: string; at: string }[];
+  cash: {
+    floats: number;
+    sales: number;
+    expenses: number;
+    to_safe: number;
+    from_safe: number;
+    expected: number;
+    counted: number;
+    difference: number;
+    open_shifts: number;
+    outside_shifts: number;
+  };
+  top_items: { name: string; qty: number; net: number }[];
+  checks: { price_mismatches: number; payment_differences: number; ledger_blocked: number };
+  warnings: { code: string; level: "check" | "info"; text: string }[];
+  digest: string;
+};
+
+export type Amendment = { what: string; before: number; after: number; money: boolean };
+
+export type DayView = {
+  business_date: string;
+  today: string;
+  report: ZReport;
+  closed?: { closed_at: string; closed_by: string; report: ZReport };
+  amended: boolean;
+  amendments: Amendment[];
+};
+
+export type DayList = {
+  today: string;
+  closed: { business_date: string; closed_at: string; closed_by: string; bills: number; grand_total: number; shifts: number; cash_difference: number }[];
+};

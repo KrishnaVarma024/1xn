@@ -279,7 +279,7 @@ test("every page of a brand-new restaurant renders its empty state", async ({ pa
   const o = await signUpViaAPI(request, "Fresh Start Kitchen");
   await signIn(page, o.token);
   const broken: string[] = [];
-  for (const p of ["/floor", "/menu", "/tables", "/devices", "/bills", "/alerts", "/books"]) {
+  for (const p of ["/floor", "/menu", "/tables", "/devices", "/bills", "/day", "/alerts", "/books"]) {
     await page.goto(p);
     await page.waitForLoadState("networkidle");
     if (await page.getByText("This page could not load").count()) broken.push(p);
@@ -353,7 +353,7 @@ test("the owner token and API address never reach page HTML or scripts", async (
     if (/html|javascript|x-component|text\/plain/.test(ct)) bodies.push(await r.text().catch(() => ""));
   });
   await signIn(page, o.token);
-  for (const p of ["/floor", "/menu", "/tables", "/devices", "/bills", "/alerts", "/books"]) {
+  for (const p of ["/floor", "/menu", "/tables", "/devices", "/bills", "/day", "/alerts", "/books"]) {
     await page.goto(p);
     await page.waitForLoadState("networkidle");
   }

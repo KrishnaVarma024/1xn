@@ -81,3 +81,34 @@ func TestNegativeRoundOffIsADebit(t *testing.T) {
 		t.Fatalf("total %d, round-off %d", total, by[AcctRoundOff])
 	}
 }
+
+func TestCashRulesBalance(t *testing.T) {
+	tenant, le, outlet := ids.New(), ids.New(), ids.New()
+	at := time.Date(2026, 9, 28, 15, 0, 0, 0, time.UTC)
+	for _, kind := range []string{"expense", "to_safe", "from_safe"} {
+		e, err := CashMoveEntry(tenant, le, outlet, ids.New(), kind, 30000, at, at, "vegetables")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sum, cash int64
+		for _, l := range e.Lines {
+			sum += l.Amount
+			if l.AccountCode == AcctCash {
+				cash += l.Amount
+			}
+		}
+		want := map[string]int64{"expense": -30000, "to_safe": -30000, "from_safe": 30000}[kind]
+		if sum != 0 || cash != want {
+			t.Fatalf("%s: sum %d, cash %d (want %d)", kind, sum, cash, want)
+		}
+	}
+	if _, err := CashMoveEntry(tenant, le, outlet, ids.New(), "gift", 1, at, at, "x"); err == nil {
+		t.Fatal("unknown kinds are refused")
+	}
+	for _, diff := range []int64{-5000, 2500} {
+		e := CashDifferenceEntry(tenant, le, outlet, ids.New(), diff, at, at)
+		if e.Lines[0].Amount+e.Lines[1].Amount != 0 || e.Lines[0].AccountCode != AcctCash || e.Lines[0].Amount != diff {
+			t.Fatalf("difference %d: %+v", diff, e.Lines)
+		}
+	}
+}

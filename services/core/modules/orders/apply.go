@@ -139,9 +139,18 @@ func checkTable(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext, table *u
 	return nil
 }
 
+// Times a device clock can plausibly produce: after GST began (1 Jul 2017,
+// India) and at most 48 hours ahead, the same rule as for bills.
+var gstStart = time.Date(2017, 7, 1, 0, 0, 0, 0, time.FixedZone("IST", 5*3600+1800))
+
+const maxClockAhead = 48 * time.Hour
+
 func when(t time.Time) error {
 	if t.IsZero() {
 		return reject("bad_payload", "the op needs a timestamp")
+	}
+	if t.Before(gstStart) || t.After(time.Now().Add(maxClockAhead)) {
+		return reject("bad_payload", "the op's time is before GST began or more than 48 hours ahead; check the device clock")
 	}
 	return nil
 }
@@ -399,6 +408,9 @@ func applyLineVoided(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (sy
 	}
 	return mutate(ctx, tx, a, p.OrderID, []uuid.UUID{p.LineID}, func(o *Order) (bool, error) {
 		changed, alert, err := o.VoidLine(VoidCmd{LineID: p.LineID, Reason: p.Reason, ApprovedBy: p.ApprovedBy, At: p.At})
+		if err == nil && changed {
+			err = logVoids(ctx, tx, a, o, []uuid.UUID{p.LineID}, false)
+		}
 		if err == nil && alert != "" {
 			lineID := p.LineID
 			err = alerts.Raise(ctx, tx, a.Device.TenantID, alert, "warning", &lineID, map[string]any{
@@ -473,12 +485,21 @@ func applyCancelled(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (syn
 		return syncop.Applied{}, reject("order_merged",
 			fmt.Sprintf("order %s was merged into %s; cancel lines there instead", o.ID, *o.MergedInto))
 	}
+	var live []uuid.UUID
+	for i := range o.Lines {
+		if o.Lines[i].Live() {
+			live = append(live, o.Lines[i].ID)
+		}
+	}
 	changed, alert, err := o.Cancel(p.Reason, p.ApprovedBy, p.At)
 	if err != nil {
 		return syncop.Applied{}, rejection(err)
 	}
 	if !changed {
 		return syncop.Applied{ServerSeq: seq, Duplicate: true}, nil
+	}
+	if err := logVoids(ctx, tx, a, o, live, true); err != nil {
+		return syncop.Applied{}, err
 	}
 	if alert != "" {
 		if err := alerts.Raise(ctx, tx, a.Device.TenantID, alert, "warning", &o.ID, map[string]any{

@@ -104,6 +104,16 @@ type Line struct {
 // Live reports whether the line still needs to be billed or voided.
 func (l *Line) Live() bool { return l.Status == Held || l.Status == Fired }
 
+// Value is what the line would charge before discounts and tax:
+// qty x (unit price + modifiers), like the pricing engine's gross.
+func (l *Line) Value() int64 {
+	unit := l.UnitPricePaise
+	for _, m := range l.Modifiers {
+		unit += m.PricePaise
+	}
+	return unit * l.Qty
+}
+
 // KOT is a kitchen order ticket: the lines one section must cook, sent at once.
 type KOT struct {
 	ID        uuid.UUID   `json:"id"`

@@ -8,6 +8,7 @@ const links = [
   { href: "/menu", label: "Menu", icon: "M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" },
   { href: "/tables", label: "Tables", icon: "M4 9h16M6 9v9M18 9v9M8 5h8" },
   { href: "/devices", label: "Devices", icon: "M7 3h10v18H7zM11 18h2" },
+  { href: "/day", label: "Day close", icon: "M12 3v2M12 19v2M5 12H3M21 12h-2M7 7l-1.5-1.5M18.5 18.5 17 17M7 17l-1.5 1.5M18.5 5.5 17 7M12 8a4 4 0 100 8 4 4 0 000-8z" },
   { href: "/bills", label: "Bills", icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" },
   { href: "/alerts", label: "Alerts", icon: "M12 4l9 16H3zM12 10v4M12 17h.01" },
   { href: "/books", label: "Books", icon: "M5 4h6a2 2 0 012 2v14a2 2 0 00-2-2H5zM19 4h-6a2 2 0 00-2 2v14a2 2 0 012-2h6z" },

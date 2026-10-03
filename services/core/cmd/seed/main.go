@@ -21,6 +21,7 @@ import (
 
 	"1xn/core/internal/platform/gst"
 	"1xn/core/internal/platform/ids"
+	"1xn/core/modules/dayclose"
 	"1xn/core/modules/sales"
 	"1xn/core/modules/sales/pricing"
 	"1xn/core/modules/syncgw"
@@ -105,9 +106,10 @@ func (l line) payload() map[string]any {
 
 func seed() (token, businessDay string, err error) {
 	now := time.Now().In(gst.IST)
-	// One business day for the whole evening, even when the seed runs just
-	// after midnight: a bill may carry its issue date or the day before.
-	businessDay = now.Add(-2 * time.Hour).Format(time.DateOnly)
+	// Everything below happens in the last four hours, on the trading day
+	// the back office opens by default (it starts at 04:00). Every event is
+	// then on its business day's date or the day after, which is allowed.
+	businessDay = dayclose.TradingDay(now).Format(time.DateOnly)
 	fmt.Println("Creating a demo restaurant through the API...")
 
 	var signup struct {
@@ -275,7 +277,14 @@ func seed() (token, businessDay string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := open("T2", 2, 25, newLine("Chicken 65", 1), newLine("Fresh lime soda", 2)); err != nil {
+	soda := newLine("Fresh lime soda", 2)
+	t2, err := open("T2", 2, 25, newLine("Chicken 65", 1), soda)
+	if err != nil {
+		return "", "", err
+	}
+	// T2 changed their mind about the sodas; the manager approved the void.
+	if err := captain.push(captain.op("order.line_voided", map[string]any{"order_id": t2, "line_id": soda.ID,
+		"reason": "Guest changed their mind", "approved_by": "Manager Ravi", "at": at(20)})); err != nil {
 		return "", "", err
 	}
 	if _, err := open("R1", 2, 10, newLine("Veg biryani", 1), newLine("Masala chaas", 2)); err != nil {
@@ -308,17 +317,59 @@ func seed() (token, businessDay string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	// Bills in the order they were printed, so invoice numbers follow time:
-	// a takeaway, then T3, then another takeaway.
+	// The till's afternoon, in the order it happened, so invoice numbers
+	// follow time: Asha opens a shift with a Rs 2,000 float, pays Rs 300 for
+	// ice, bills a takeaway (cash), T3 (UPI) and another takeaway (card),
+	// and counts her drawer Rs 50 short. Vikram's evening shift is open.
+	biryani := []line{newLine("Veg biryani", 2)}
+	afternoon, evening := ids.New(), ids.New()
+	expected := int64(200_000) - 30_000 + total(biryani...)
+	counted := expected - 5_000
 	if err := till.push(
-		till.bill(uuid.Nil, "", 0, at(90), businessDay, "cash", newLine("Veg biryani", 2)),
+		till.op("shift.opened", map[string]any{"shift_id": afternoon, "business_date": businessDay,
+			"opened_at": at(235), "opened_by": "Asha", "opening_float_paise": 200_000}),
+		till.op("cash.moved", map[string]any{"move_id": ids.New(), "shift_id": afternoon, "kind": "expense",
+			"amount_paise": 30_000, "reason": "Ice and lemons", "at": at(200)}),
+		till.bill(uuid.Nil, "", 0, at(90), businessDay, "cash", biryani...),
 		till.bill(t3, "T3", 3, at(70), businessDay, "upi", t3Lines...),
 		till.bill(uuid.Nil, "", 0, at(60), businessDay, "card", newLine("Chicken 65", 1), newLine("Masala chaas", 1)),
+		till.op("shift.closed", map[string]any{"shift_id": afternoon, "closed_at": at(55), "closed_by": "Asha",
+			"counted_paise": counted, "denominations": notes(counted)}),
+		till.op("shift.opened", map[string]any{"shift_id": evening, "business_date": businessDay,
+			"opened_at": at(50), "opened_by": "Vikram", "opening_float_paise": 100_000}),
 	); err != nil {
 		return "", "", err
 	}
-	fmt.Println("  floor: T1, T2 and R1 eating; T3 paid (UPI); 2 takeaways paid")
+	fmt.Println("  floor: T1, T2 and R1 eating (T2's sodas voided); T3 paid (UPI); 2 takeaways paid")
+	fmt.Println("  till: Asha's shift closed Rs 50 short; Vikram's shift open")
 	return owner, businessDay, nil
+}
+
+// total is what a bill of these lines comes to.
+func total(lines ...line) int64 {
+	in := pricing.Input{PriceMode: pricing.Exclusive, Supply: pricing.Intra, Rounding: pricing.NearestRupee}
+	for _, l := range lines {
+		in.Lines = append(in.Lines, pricing.Line{Ref: l.Item.ID, Name: l.Item.Name, Qty: l.Qty,
+			UnitPricePaise: l.Item.Price, TaxRateBP: 500, Modifiers: l.Mods})
+	}
+	r, err := pricing.Compute(in)
+	if err != nil {
+		panic(err) // the seed's own menu always prices
+	}
+	return r.GrandTotal
+}
+
+// notes counts an amount the way a cashier does: largest notes first.
+func notes(paise int64) map[string]int64 {
+	out := map[string]int64{}
+	rupees := paise / 100
+	for _, n := range []int64{500, 200, 100, 50, 20, 10, 5, 2, 1} {
+		if c := rupees / n; c > 0 {
+			out[fmt.Sprint(n)] = c
+			rupees -= c * n
+		}
+	}
+	return out
 }
 
 // bill prices lines with the shared engine and wraps them in a bill.settled

@@ -23,6 +23,7 @@ import (
 	"1xn/core/internal/platform/outbox"
 	"1xn/core/internal/platform/syncop"
 	"1xn/core/modules/catalogue"
+	"1xn/core/modules/dayclose"
 	"1xn/core/modules/identity"
 	"1xn/core/modules/ledger"
 	"1xn/core/modules/orders"
@@ -318,6 +319,24 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	if diff != 0 {
 		if err := alerts.Raise(ctx, tx, a.Device.TenantID, "payment_difference", "warning", &billID, map[string]any{
 			"invoice_no": b.InvoiceNo, "paid": paid, "due": printed.GrandTotal + b.TipPaise, "difference": diff,
+		}); err != nil {
+			return syncop.Applied{}, err
+		}
+	}
+	// Cash on a bill that arrives after its shift was counted: the shift's
+	// expected cash and difference are corrected, in the books too.
+	if err := dayclose.LateCash(ctx, tx, a, billID, b.IssuedAt); err != nil {
+		return syncop.Applied{}, err
+	}
+	// A bill for a day the owner already closed is kept (the guest paid; the
+	// invoice exists), and flagged: the day's Z report is now amended.
+	closed, err := dayclose.DayClosed(ctx, tx, a.Device.OutletID, bizDate)
+	if err != nil {
+		return syncop.Applied{}, err
+	}
+	if closed {
+		if err := alerts.Raise(ctx, tx, a.Device.TenantID, "bill_after_day_close", "warning", &billID, map[string]any{
+			"invoice_no": b.InvoiceNo, "business_date": b.BusinessDate, "grand_total": printed.GrandTotal,
 		}); err != nil {
 			return syncop.Applied{}, err
 		}

@@ -72,6 +72,44 @@ export const alertText: Record<string, { title: string; help: string }> = {
     title: "Guests were seated at a table you switched off",
     help: "The order is kept. Switch the table back on, or tell the staff.",
   },
+  cash_difference: {
+    title: "A cash drawer did not match at the end of a shift",
+    help: "The difference is booked to Cash over and short. Recount, and talk to the cashier if it repeats.",
+  },
+  cash_after_shift_close: {
+    title: "A cash bill arrived after its shift's drawer was counted",
+    help: "The shift's expected cash and difference were corrected, in the books too. Usually a till that was offline.",
+  },
+  bill_after_day_close: {
+    title: "A bill arrived for a day you already closed",
+    help: "It is kept and counted. The day's report now shows as amended.",
+  },
+  shift_after_day_close: {
+    title: "A till shift arrived for a day you already closed",
+    help: "It is kept. Open the day to see the amended cash figures.",
+  },
+};
+
+export const cashMoveLabel: Record<string, string> = {
+  expense: "Paid out",
+  to_safe: "To safe",
+  from_safe: "From safe",
+};
+
+// What changed on a closed day since it was closed.
+export const amendmentLabel: Record<string, string> = {
+  bills: "Bills",
+  sales: "Sales",
+  tax: "GST",
+  payments: "Payments",
+  voided_dishes: "Voided dishes",
+  void_value: "Value voided",
+  cancelled_orders: "Cancelled orders",
+  shifts: "Shifts",
+  closed_shifts: "Shifts counted",
+  counted_cash: "Cash counted",
+  cash_difference: "Cash over/short",
+  cash_moves: "Cash moves",
 };
 
 export const kotStatusLabel: Record<string, string> = {

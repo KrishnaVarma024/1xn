@@ -7,7 +7,8 @@
 // enforces all of this (migrations/0004_ledger.sql); the checks here only give
 // earlier, clearer errors.
 //
-// Cross-module API: SeedAccounts, Post, PostBillSettled, TrialBalance.
+// Cross-module API: SeedAccounts, Post, PostBillSettled, CashMoveEntry,
+// CashDifferenceEntry, TrialBalance.
 package ledger
 
 import (
@@ -27,6 +28,7 @@ import (
 // 1 asset, 2 liability, 3 equity, 4 income, 5-9 expense.
 const (
 	AcctCash          = "1100"
+	AcctCashSafe      = "1105"
 	AcctUPI           = "1110"
 	AcctCard          = "1120"
 	AcctReceivable    = "1130"
@@ -38,10 +40,13 @@ const (
 	AcctSales         = "4100"
 	AcctServiceCharge = "4200"
 	AcctRoundOff      = "4900"
+	AcctPettyExpenses = "5200"
+	AcctCashOverShort = "5900"
 )
 
 var defaultChart = []struct{ code, name, kind string }{
 	{AcctCash, "Cash in hand", "asset"},
+	{AcctCashSafe, "Cash in safe", "asset"},
 	{AcctUPI, "UPI clearing", "asset"},
 	{AcctCard, "Card clearing", "asset"},
 	{AcctReceivable, "Customer credit (receivable)", "asset"},
@@ -53,6 +58,8 @@ var defaultChart = []struct{ code, name, kind string }{
 	{AcctSales, "Food and beverage sales", "income"},
 	{AcctServiceCharge, "Service charge income", "income"},
 	{AcctRoundOff, "Round-off", "income"},
+	{AcctPettyExpenses, "Petty cash expenses", "expense"},
+	{AcctCashOverShort, "Cash over and short", "expense"},
 }
 
 // ErrPeriodLocked means the entry's month has been closed by the accountant.
@@ -87,19 +94,22 @@ type Entry struct {
 	TenantID      uuid.UUID
 	LegalEntityID uuid.UUID
 	SourceType    string
-	SourceEventID uuid.UUID // the business event this records; posting is idempotent on it
+	SourceEventID uuid.UUID // the business event this records; posting is idempotent on (SourceType, SourceEventID)
 	EntryDate     time.Time // only the date part is used
 	BusinessDate  *time.Time
 	Memo          string
 	Lines         []Line
 }
 
-// Post writes e and returns its id. Posting the same SourceEventID again
-// returns the id of the entry already posted and writes nothing.
+// Post writes e and returns its id. Posting the same event again (same
+// SourceType and SourceEventID) returns the id of the entry already posted
+// and writes nothing. Different kinds of event never share an entry, even if
+// a device gave them the same id.
 func Post(ctx context.Context, tx *sql.Tx, e Entry) (uuid.UUID, error) {
 	var existing uuid.UUID
 	err := tx.QueryRowContext(ctx,
-		`SELECT id FROM journal_entry WHERE source_event_id = $1`, e.SourceEventID).Scan(&existing)
+		`SELECT id FROM journal_entry WHERE source_type = $1 AND source_event_id = $2`,
+		e.SourceType, e.SourceEventID).Scan(&existing)
 	if err == nil {
 		return existing, nil
 	}
