@@ -29,7 +29,7 @@ if grep -qs '^DB_PORT=' .env; then
 elif [ "$DB_PORT" != "5433" ]; then
   info "DB_PORT comes from this terminal only; to make every terminal use it: echo \"DB_PORT=$DB_PORT\" >> .env"
 else
-  info "DB_PORT is the default (Docker's 5433). Using Homebrew's Postgres? echo \"DB_PORT=5432\" >> .env"
+  info "DB_PORT is 5433, the Docker Postgres (the default)"
 fi
 if listening "$DB_PORT"; then
   ok "something answers on localhost:$DB_PORT"
@@ -46,20 +46,25 @@ if listening "$DB_PORT"; then
       info "your own Postgres: make db-local    the Docker one: make reset && make up"
     fi
   fi
+elif [ "$DB_PORT" = "5432" ]; then
+  bad "your own Postgres is not answering on localhost:5432: brew services start postgresql@16"
+  info "(or use Docker instead: take DB_PORT out of .env, then make run)"
+elif has docker && docker info >/dev/null 2>&1; then
+  ok "no Postgres on localhost:$DB_PORT yet, but Docker is running: make run starts it for you (or: make up)"
 else
-  bad "nothing is listening on localhost:$DB_PORT, so Postgres is not running there"
+  bad "nothing is listening on localhost:$DB_PORT, so there is no Postgres for 1x.n there. Pick one:"
+  if has docker; then info "A. Docker (simplest): open Docker Desktop, then make run"
+  else info "A. Docker (simplest): brew install --cask docker, open it, then make run"; fi
   other=""
   for p in 5432 5433 5434; do
     if [ "$p" != "$DB_PORT" ] && listening "$p"; then other="$p"; break; fi
   done
   if [ -n "$other" ]; then
-    info "something answers on $other. If it is your Postgres: echo \"DB_PORT=$other\" >> .env, then make db-local (first time)"
+    info "B. Your own Postgres: something answers on $other. Only if you know it is yours:"
+    info "   echo \"DB_PORT=$other\" >> .env, then make db-local (once)"
+  else
+    info "B. Your own Postgres: brew services start postgresql@16, echo \"DB_PORT=5432\" >> .env, make db-local (once)"
   fi
-  if has docker; then
-    if docker info >/dev/null 2>&1; then info "Docker is running: make up starts Postgres on $DB_PORT"
-    else info "Docker is installed but not running: open Docker Desktop, then make up"; fi
-  fi
-  if has brew; then info "Homebrew: brew services start postgresql@16 (it listens on 5432)"; fi
 fi
 
 echo "== running now"

@@ -34,11 +34,11 @@ xcode-select --install                     # git, make, python3
 brew install go node                       # Go 1.24+ and Node 22+
 ```
 
-Then pick **one** Postgres:
+Then pick **one** Postgres. Docker is the simplest; use Homebrew only if you already run your own Postgres:
 
 | Docker (`brew install --cask docker`, open it once) | Homebrew Postgres (no Docker) |
 | --- | --- |
-| `make up` (Postgres 16 on port 5433) | `brew install postgresql@16 && brew services start postgresql@16` |
+| nothing more: `make run` starts Postgres 16 on port 5433 when it is not running (so does `make up`) | `brew install postgresql@16 && brew services start postgresql@16` |
 | | `echo "DB_PORT=5432" >> .env` (once; every terminal reads it) |
 | | `make db-local` (once: creates the database and its roles) |
 
@@ -58,7 +58,7 @@ When something fails, the command says why and what to run. The usual ones:
 
 | You see | It means | Do |
 | --- | --- | --- |
-| `connection refused` on 5433 or 5432 | no Postgres on that port | the fix printed below the error (`make up`, or `DB_PORT` in `.env`) |
+| `connection refused` on 5433 or 5432 | no Postgres on that port, and Docker is not running | open Docker Desktop and run it again; or option B printed below the error |
 | `database "onexn" does not exist`, `password authentication failed` | your own Postgres is not set up for 1x.n yet | `make db-local` |
 | `address already in use` on :8080 | the API is already running in another terminal | use that one, or Ctrl-C it there |
 | `Can't reach the 1x.n API` in the back office | terminal 1 is not running `make run` | start it |

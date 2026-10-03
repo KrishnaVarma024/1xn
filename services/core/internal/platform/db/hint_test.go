@@ -14,7 +14,7 @@ func TestHintStoppedServer(t *testing.T) {
 	refused := &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
 	// A remote host is never probed, so the answer does not depend on this machine.
 	h := Hint(refused, "postgres://onexn_owner:dev@db.example:5433/onexn")
-	for _, want := range []string{"Nothing is listening on db.example:5433", "make up", "DB_PORT=5432", "make db-local"} {
+	for _, want := range []string{"Nothing is listening on db.example:5433", "Pick one", "Docker Desktop", "DB_PORT=5432", "make db-local"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("hint lacks %q:\n%s", want, h)
 		}

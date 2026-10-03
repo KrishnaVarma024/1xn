@@ -38,20 +38,18 @@ func Hint(err error, dsn string) string {
 	var pqErr *pq.Error
 	switch {
 	case errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "connection refused"):
+		own := `  B. Your own Postgres (Homebrew):  brew services start postgresql@16
+                                     echo "DB_PORT=5432" >> .env
+                                     make db-local       (once)`
 		if other := otherPostgres(host, port); other != "" {
-			return fmt.Sprintf(`Nothing is listening on %s, but something answers on port %s.
-If that is your own Postgres (Homebrew's listens on 5432), point 1x.n at it once:
-    echo "DB_PORT=%s" >> .env
-    make db-local          # first time only: creates the onexn database and its roles
-Or start the Docker Postgres on %s instead:  make up
-make doctor checks your setup.`, at, other, other, port)
+			own = fmt.Sprintf(`  B. Your own Postgres: something answers on port %s. Only if you know it is yours:
+                         echo "DB_PORT=%s" >> .env
+                         make db-local       (once)`, other, other)
 		}
-		return fmt.Sprintf(`Nothing is listening on %s: Postgres is not running there.
-  With Docker:    make up                               (open Docker Desktop first)
-  With Homebrew:  brew services start postgresql@16
-                  echo "DB_PORT=5432" >> .env
-                  make db-local                         (first time only)
-make doctor checks your setup.`, at)
+		return fmt.Sprintf(`Nothing is listening on %s: there is no Postgres for 1x.n there. Pick one:
+  A. Docker (simplest): open Docker Desktop, then run this again (or: make up)
+%s
+make doctor checks your setup.`, at, own)
 	case errors.As(err, &pqErr):
 		switch pqErr.Code {
 		case "3D000": // invalid_catalog_name: no such database
