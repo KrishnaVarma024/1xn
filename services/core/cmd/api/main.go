@@ -7,10 +7,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,8 +25,24 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
 		slog.Error("api stopped", "err", err)
+		if h := hint(err); h != "" {
+			fmt.Fprintln(os.Stderr, "\n"+h)
+		}
 		os.Exit(1)
 	}
+}
+
+// hint says what to do about the two ways a local start usually fails.
+func hint(err error) string {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		addr := os.Getenv("HTTP_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		return fmt.Sprintf("Something already listens on %s: most likely the API is already running in another terminal.\n"+
+			"Use that one, or stop it there with Ctrl-C. To see who has the port: lsof -nP -iTCP%s -sTCP:LISTEN", addr, addr)
+	}
+	return db.Hint(err, os.Getenv("DATABASE_URL"))
 }
 
 func run() error {
@@ -54,10 +73,15 @@ func run() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Take the port first, so "listening" is only ever said when it is true.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info("api listening", "addr", addr)
-		errc <- srv.ListenAndServe()
+		slog.Info("api listening", "addr", addr, "health", "http://localhost"+addr[strings.LastIndex(addr, ":"):]+"/healthz")
+		errc <- srv.Serve(ln)
 	}()
 
 	select {

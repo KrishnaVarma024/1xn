@@ -52,10 +52,7 @@ type SignupResponse struct {
 	OwnerToken    string    `json:"owner_token"`
 }
 
-var (
-	phoneRe = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
-	stateRe = regexp.MustCompile(`^[0-9]{2}$`)
-)
+var phoneRe = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
 
 func bad(code, msg string) error { return httpx.E(http.StatusBadRequest, code, msg) }
 
@@ -89,8 +86,8 @@ func (req *SignupRequest) normalise() error {
 		return bad("bad_phone", "owner.phone must be E.164, like +919876543210")
 	case strings.TrimSpace(le.Name) == "":
 		return bad("bad_legal_entity", "legal_entity.name is required")
-	case !stateRe.MatchString(le.StateCode):
-		return bad("bad_state_code", "legal_entity.state_code must be two digits")
+	case !gst.ValidStateCode(le.StateCode):
+		return bad("bad_state_code", "legal_entity.state_code must be a GST state code in use, like 29 for Karnataka")
 	case strings.TrimSpace(req.Outlet.Name) == "":
 		return bad("bad_outlet", "outlet.name is required")
 	case req.Outlet.PriceMode != "exclusive" && req.Outlet.PriceMode != "inclusive":

@@ -5,10 +5,15 @@
 #   onexn_app    what the API uses; Row-Level Security applies to it
 
 #
-# Postgres listens on host port 5433, not the default 5432, so it never fights
-# with another Postgres already on your Mac. Use another port with, for example:
-#   export DB_PORT=5434      (then every make command uses it)
+# The Docker Postgres (`make up`) listens on host port 5433, not the default
+# 5432, so it never fights with another Postgres already on your Mac.
+#
+# Your own settings go in .env (gitignored), read by every make command in
+# every terminal. Usually one line is all it takes:
+#   DB_PORT=5432     you run Homebrew's Postgres instead of Docker
+# A one-off works too: make run DB_PORT=5434
 
+-include .env
 DB_PORT              ?= 5433
 MIGRATE_DATABASE_URL ?= postgres://onexn_owner:dev@localhost:$(DB_PORT)/onexn?sslmode=disable
 DATABASE_URL         ?= postgres://onexn_app:dev@localhost:$(DB_PORT)/onexn?sslmode=disable
@@ -17,22 +22,13 @@ CORE := services/core
 WEB  := apps/backoffice
 export ONEXN_DB_PORT := $(DB_PORT)
 
-.PHONY: help doctor up down reset migrate run demo seed web web-install test test-unit test-web golden fuzz fmt vet check
+.PHONY: help doctor up down reset db-local migrate run demo seed web web-install test test-unit test-web golden fuzz fmt vet check
 
 help: ## list commands
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-12s %s\n", $$1, $$2}'
 
-doctor: ## check your tools, Docker and the database port
-	@for t in go docker python3 git node npm; do \
-	  if command -v $$t >/dev/null; then echo "ok       $$t"; else echo "MISSING  $$t (see README: Run it on your Mac)"; fi; done
-	@if command -v node >/dev/null && [ "$$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then \
-	  echo "PROBLEM  Node $$(node -v) is too old for the back office: install Node 22 or newer (brew install node)"; fi
-	@if docker info >/dev/null 2>&1; then echo "ok       Docker is running"; \
-	  else echo "PROBLEM  Docker is installed but not running: open Docker Desktop"; fi
-	@if ! lsof -nP -iTCP:$(DB_PORT) -sTCP:LISTEN >/dev/null 2>&1; then echo "ok       port $(DB_PORT) is free"; \
-	  elif docker compose ps --status running 2>/dev/null | grep -q postgres; then echo "ok       port $(DB_PORT) is our Postgres"; \
-	  else echo "PROBLEM  port $(DB_PORT) is taken by:"; lsof -nP -iTCP:$(DB_PORT) -sTCP:LISTEN; \
-	       echo "         pick another port: export DB_PORT=5434"; fi
+doctor: ## check your tools, the database and what is running; says what to do about each problem
+	@DB_PORT=$(DB_PORT) ./scripts/doctor.sh
 
 up: ## start Postgres in Docker (port 5433, or DB_PORT) and wait until healthy
 	docker compose up -d --wait
@@ -43,10 +39,13 @@ down: ## stop Postgres (data is kept in a Docker volume)
 reset: ## stop Postgres AND delete its data
 	docker compose down -v
 
+db-local: ## no Docker? set up the onexn database and roles on your own Postgres (Homebrew), once
+	@DB_PORT=$(DB_PORT) ./scripts/db-local.sh
+
 migrate: ## apply schema migrations (as the owner role)
 	cd $(CORE) && MIGRATE_DATABASE_URL="$(MIGRATE_DATABASE_URL)" go run ./cmd/migrate
 
-run: migrate ## run the API on :8080 (as the app role)
+run: migrate ## run the API on :8080 (as the app role); leave it running in its own terminal
 	cd $(CORE) && DATABASE_URL="$(DATABASE_URL)" go run ./cmd/api
 
 demo: ## walk through the P0 exit gate against a running API (make run first)

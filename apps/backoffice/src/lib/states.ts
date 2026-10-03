@@ -38,3 +38,8 @@ export const STATES: [code: string, name: string][] = [
   ["38", "Ladakh"],
   ["97", "Other Territory"],
 ];
+
+/** "29" -> "Karnataka"; undefined for a code that is not a state. */
+export function stateName(code: string): string | undefined {
+  return STATES.find(([c]) => c === code)?.[1];
+}

@@ -4,12 +4,13 @@ import Link from "next/link";
 import { startTransition, useActionState, useState } from "react";
 import { FormMessage } from "@/components/forms";
 import { Button, Field, Input, Select, buttonClass } from "@/components/ui";
-import { STATES } from "@/lib/states";
+import { STATES, stateName } from "@/lib/states";
 import { signUp, type SignUpState } from "../actions";
 
 export function SignUpForm() {
   const [state, action, pending] = useActionState<SignUpState, FormData>(signUp, undefined);
   const [copied, setCopied] = useState(false);
+  const [stateCode, setStateCode] = useState("29");
 
   if (state?.token) {
     return (
@@ -69,15 +70,25 @@ export function SignUpForm() {
       </Field>
       <fieldset className="space-y-4 rounded-lg border border-line p-3">
         <legend className="px-1 text-xs font-medium text-ink-soft">GST registration</legend>
-        <Field label="GSTIN" hint="Leave empty if you are not registered. The state then comes from the list below.">
-          <Input name="gstin" maxLength={15} placeholder="29ABCDE1234F1Z5" className="font-mono uppercase" />
+        <Field label="GSTIN" hint="Leave empty if you are not registered. Its first two digits are its state, picked below for you.">
+          <Input
+            name="gstin"
+            maxLength={15}
+            placeholder="29ABCDE1234F1ZW"
+            className="font-mono uppercase"
+            onChange={(e) => {
+              // "29..." is Karnataka: follow the GSTIN, so the two cannot disagree by accident.
+              const code = e.currentTarget.value.trim().slice(0, 2);
+              if (stateName(code)) setStateCode(code);
+            }}
+          />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Legal name" hint="As on the GST certificate.">
             <Input name="legal_name" maxLength={200} placeholder="Spice Route Foods Pvt Ltd" />
           </Field>
           <Field label="State">
-            <Select name="state_code" defaultValue="29">
+            <Select name="state_code" value={stateCode} onChange={(e) => setStateCode(e.currentTarget.value)}>
               {STATES.map(([code, name]) => (
                 <option key={code} value={code}>
                   {name} ({code})

@@ -192,7 +192,7 @@ func call(method, path, token string, body, out any) error {
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w (is the API running? try: make run)", method, path, err)
+		return fmt.Errorf("%s %s: %w\n\nThe API is not answering. Start it with `make run` in another terminal, leave it running, then try again", method, path, err)
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(res.Body)

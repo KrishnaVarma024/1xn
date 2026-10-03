@@ -87,3 +87,21 @@ func ValidGSTIN(g string) bool {
 	check := (36 - sum%36) % 36
 	return gstinAlphabet[check] == g[14]
 }
+
+// stateCodes are the GST state codes a business can register under today:
+// 01 to 38 and 97 (Other Territory), less 25 (Daman and Diu, merged into 26
+// in 2020) and 28 (Andhra Pradesh before 2014; GST began with 37).
+var stateCodes = func() map[string]bool {
+	m := map[string]bool{"97": true}
+	for i := 1; i <= 38; i++ {
+		if i != 25 && i != 28 {
+			m[fmt.Sprintf("%02d", i)] = true
+		}
+	}
+	return m
+}()
+
+// ValidStateCode reports whether code is a GST state code in use. The state
+// decides every bill's tax: the same state means CGST and SGST, another state
+// IGST. So a mistyped one is refused, never stored.
+func ValidStateCode(code string) bool { return stateCodes[code] }

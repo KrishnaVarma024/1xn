@@ -21,8 +21,7 @@ func main() {
 	ctx := context.Background()
 	d, err := db.Open(ctx, dsn)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fail(err, dsn)
 	}
 	defer d.Close()
 	ran, err := db.Migrate(ctx, d, migrations.FS)
@@ -30,10 +29,18 @@ func main() {
 		fmt.Println("applied", name)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fail(err, dsn)
 	}
 	if len(ran) == 0 {
 		fmt.Println("schema is up to date")
 	}
+}
+
+// fail prints the error and, when it is a local setup problem, how to fix it.
+func fail(err error, dsn string) {
+	fmt.Fprintln(os.Stderr, err)
+	if h := db.Hint(err, dsn); h != "" {
+		fmt.Fprintln(os.Stderr, "\n"+h)
+	}
+	os.Exit(1)
 }

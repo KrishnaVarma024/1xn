@@ -59,6 +59,14 @@ Both have unit tests (`npm test`).
 
 React 19 resets a form after every submission through its `action` prop, even when the server answered "error". An owner who typed a long GSTIN and got one character wrong would lose the whole form. `ActionForm` (in `src/components/forms.tsx`) submits through `startTransition` instead and clears the form only after a success. The browser test types a bad GSTIN and checks that the restaurant name is still there. We removed the fix once to make sure the test notices, and it failed.
 
+## A GSTIN decides every bill's tax
+
+A GSTIN's first two digits are its state, and the state decides the tax on every bill: the same state as the guest means CGST + SGST, another state means IGST. So sign-up checks three things, each with its own message. The check digit (the 15th character) catches one mistyped character. The state code must be one in use (28 was Andhra Pradesh before 2014; GST starts at 37). And the GSTIN must belong to the state the owner picked: typing a GSTIN picks its state in the form, and if the owner changes the state afterwards, the form names both states instead of quietly using one. The rule lives in the API (`gst.ValidStateCode`, `bad_state_code`); the form only explains it better.
+
+## Opening the dev server from a phone
+
+`next dev` serves its own dev files (hot reload, page chunks) only to pages opened on `localhost`. A page opened on the Mac's network address (`http://192.168.1.3:3000`, the "Network:" line) is another origin, and Next.js blocks it, because any website you visit could otherwise read your dev server's code. `next.config.ts` allows this machine's own network addresses (`allowedDevOrigins`) and nobody else's, so the back office works on a phone on the same Wi-Fi. It also pins `turbopack.root` to this folder: Next.js looks for the nearest lockfile to find the project root, and a stray `package-lock.json` in your home folder would otherwise make it watch your whole home folder.
+
 ## The proxy is a doorman, not a guard
 
 `src/proxy.ts` runs before every request. If there is no token cookie, it redirects to `/sign-in` without rendering anything. It does **not** decide whether the token is valid; it cannot, cheaply. The Go API decides that on every call. A doorman who waves away people without a ticket saves work; the guard inside still checks every ticket.

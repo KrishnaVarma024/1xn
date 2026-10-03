@@ -72,3 +72,18 @@ func TestValidGSTIN(t *testing.T) {
 		}
 	}
 }
+
+func TestValidStateCode(t *testing.T) {
+	for _, c := range []string{"01", "07", "26", "27", "29", "36", "37", "38", "97"} {
+		if !ValidStateCode(c) {
+			t.Errorf("%s should be a state in use", c)
+		}
+	}
+	// 25 merged into 26, 28 is pre-2014 Andhra Pradesh, 99 is the Centre's own
+	// jurisdiction: none can be a restaurant's state. Nor can non-codes.
+	for _, c := range []string{"", "00", "25", "28", "39", "96", "99", "9", "290", "2a"} {
+		if ValidStateCode(c) {
+			t.Errorf("%q should be refused", c)
+		}
+	}
+}

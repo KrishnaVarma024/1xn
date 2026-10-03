@@ -31,41 +31,41 @@ One-time setup:
 ```bash
 xcode-select --install                     # git, make, python3
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install go                            # Go 1.24 or newer
-brew install --cask docker                 # Docker Desktop; open it once so it starts
+brew install go node                       # Go 1.24+ and Node 22+
 ```
 
-Then, in this folder:
+Then pick **one** Postgres:
 
-```bash
-make doctor    # checks go, docker, python3, git and that port 5433 is free
-make up        # Postgres 16 in Docker, on port 5433
-make test      # every test, including end-to-end against that Postgres
-make run       # migrate, then start the API on :8080  (leave running)
-make demo      # in a second terminal: the P0 exit gate, narrated
-```
+| Docker (`brew install --cask docker`, open it once) | Homebrew Postgres (no Docker) |
+| --- | --- |
+| `make up` (Postgres 16 on port 5433) | `brew install postgresql@16 && brew services start postgresql@16` |
+| | `echo "DB_PORT=5432" >> .env` (once; every terminal reads it) |
+| | `make db-local` (once: creates the database and its roles) |
 
-The back office (needs Node 22 or newer: `brew install node`):
+`make doctor` checks all of this and says what to do about anything missing.
 
-```bash
-make seed      # with make run still going: a demo restaurant; prints its owner token
-make web       # first run installs packages; then open http://localhost:3000 and paste the token
-make test-web  # the back office in a real browser against the real API
-```
+**Three terminals**, each in this folder. The API must keep running while you use the others:
 
-**"port is already allocated"?** Something else on your Mac already uses that port (often another Postgres). This repo uses 5433 so that is rare; if it happens, `make doctor` shows who owns the port, and `export DB_PORT=5434` moves ours.
+| Terminal | Command | What you see |
+| --- | --- | --- |
+| 1 | `make run` | migrations, then `api listening :8080`. Leave it running. |
+| 2 | `make seed` | a demo restaurant with a live evening; prints its **owner token** |
+| 3 | `make web` | the back office; open **http://localhost:3000** and paste the token |
 
-No Docker? Use Homebrew's Postgres instead (it listens on 5432):
+Then `make test` (every Go test) and `make test-web` (the back office in a real browser). `make demo` narrates the P0 exit gate against the running API. `make help` lists every command.
 
-```bash
-brew install postgresql@16 && brew services start postgresql@16
-psql postgres -c "CREATE ROLE onexn_owner LOGIN SUPERUSER PASSWORD 'dev'"
-psql postgres -c "CREATE DATABASE onexn OWNER onexn_owner"
-psql -U onexn_owner onexn -f infra/local/init.sql
-export DB_PORT=5432   # then make test / make run as usual (skip make up)
-```
+When something fails, the command says why and what to run. The usual ones:
 
-`make help` lists every command. The URLs are in `.env.example`.
+| You see | It means | Do |
+| --- | --- | --- |
+| `connection refused` on 5433 or 5432 | no Postgres on that port | the fix printed below the error (`make up`, or `DB_PORT` in `.env`) |
+| `database "onexn" does not exist`, `password authentication failed` | your own Postgres is not set up for 1x.n yet | `make db-local` |
+| `address already in use` on :8080 | the API is already running in another terminal | use that one, or Ctrl-C it there |
+| `Can't reach the 1x.n API` in the back office | terminal 1 is not running `make run` | start it |
+| Safari: "Can't find the server www.localhost.com" or "Connection is not secure" | Safari could not reach `localhost:8080` (the API was not running) and guessed `https://www.localhost.com` | open the back office, `http://localhost:3000`, with the `http://`. The API is not a website: only the back office talks to it (`http://localhost:8080/healthz` answers 200 when it is up) |
+| Next.js: "Blocked cross-origin request" | you opened the Network address (`http://192.168...:3000`) | fine on this Mac or a phone on the same Wi-Fi now; restart `make web` after changing networks |
+| vi: `E325: ATTENTION` ... `.swp` | another vi has that file open, or one crashed | close the other vi; if vi offers "(D)elete it", press `D` |
+| "port is already allocated" from `make up` | something else on your Mac already uses 5433 | `make doctor` shows who; `echo "DB_PORT=5434" >> .env` moves ours |
 
 ## API (v1, this slice)
 

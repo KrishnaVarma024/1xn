@@ -153,6 +153,40 @@ test("sign-up refuses a 9-digit mobile number instead of saving it as a foreign 
   }
 });
 
+test("sign-up keeps the GSTIN and the state in step, and says which is wrong", async ({ page }) => {
+  await page.goto("/sign-up");
+  await page.getByLabel("Restaurant name").fill("Castro Brewing");
+  await page.getByLabel("Your name").fill("Krishna");
+  await page.getByLabel("Mobile number").fill("99933 32221");
+  await page.getByLabel("First outlet").fill("HSR Layout");
+  const form = page.getByRole("form", { name: "Create your restaurant" });
+  const state = form.getByRole("combobox", { name: /^State/ });
+
+  // Typing a GSTIN picks its state: 37 is Andhra Pradesh.
+  await page.getByLabel("GSTIN").fill("37ABCDE1234F1ZZ");
+  await expect(state).toHaveValue("37");
+  // Picking another state afterwards is refused with both names, not quietly overridden.
+  await state.selectOption("29");
+  await page.getByRole("button", { name: "Create restaurant" }).click();
+  await expect(form.getByRole("alert")).toContainText("registered in Andhra Pradesh (37), but you picked Karnataka");
+
+  // A GSTIN that does not start with a state in use (28 was Andhra Pradesh before 2014).
+  await page.getByLabel("GSTIN").fill("28EFGHI4321J1X6");
+  await expect(state).toHaveValue("29"); // 28 is not on the list, so the state stays put
+  await page.getByRole("button", { name: "Create restaurant" }).click();
+  await expect(form.getByRole("alert")).toContainText('"28" is not one in use');
+
+  // Right state, mistyped number: the check digit catches it.
+  await page.getByLabel("GSTIN").fill("29ABCDE1234F1Z5");
+  await page.getByRole("button", { name: "Create restaurant" }).click();
+  await expect(form.getByRole("alert")).toContainText("That GSTIN is not valid");
+  await expect(page.getByLabel("Restaurant name")).toHaveValue("Castro Brewing"); // nothing typed is lost
+
+  await page.getByLabel("GSTIN").fill("29ABCDE1234F1ZW");
+  await page.getByRole("button", { name: "Create restaurant" }).click();
+  await expect(page.getByTestId("owner-token")).toBeVisible();
+});
+
 test("a pasted token with a stray non-ASCII character is 'wrong', not 'API unreachable'", async ({ page }) => {
   await page.goto("/sign-in");
   // The placeholder itself ends in "…"; chat apps also add zero-width spaces.

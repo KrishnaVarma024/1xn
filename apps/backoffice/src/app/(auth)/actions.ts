@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { text, type FormState } from "@/lib/actions";
 import { clearSession, setToken } from "@/lib/session";
+import { stateName } from "@/lib/states";
 import type { Me } from "@/lib/types";
 
 export async function signIn(_: FormState, form: FormData): Promise<FormState> {
@@ -30,14 +31,25 @@ export type SignUpState = (FormState & { token?: string }) | undefined;
 export async function signUp(_: SignUpState, form: FormData): Promise<SignUpState> {
   const phone = normalisePhone(text(form, "phone"));
   if (!phone) return { error: "Enter a 10-digit mobile number, or the full number with + and the country code." };
-  const gstin = text(form, "gstin").toUpperCase();
+  const gstin = text(form, "gstin").toUpperCase().replace(/\s+/g, "");
+  const stateCode = text(form, "state_code");
+  // A GSTIN's first two digits are its state. Say so when they disagree,
+  // instead of quietly registering the restaurant in another state.
+  if (gstin && gstin.slice(0, 2) !== stateCode) {
+    const from = stateName(gstin.slice(0, 2));
+    return {
+      error: from
+        ? `This GSTIN is registered in ${from} (${gstin.slice(0, 2)}), but you picked ${stateName(stateCode) ?? stateCode}. Fix the GSTIN or the state.`
+        : `A GSTIN starts with its state's code, like 29 for Karnataka, and "${gstin.slice(0, 2)}" is not one in use. Copy it exactly from your GST certificate.`,
+    };
+  }
   const body = {
     business_name: text(form, "business_name"),
     owner: { name: text(form, "owner_name"), phone },
     legal_entity: {
       name: text(form, "legal_name") || text(form, "business_name"),
       gstin: gstin || undefined,
-      state_code: gstin ? gstin.slice(0, 2) : text(form, "state_code"),
+      state_code: stateCode,
     },
     outlet: {
       name: text(form, "outlet_name"),
@@ -49,6 +61,13 @@ export async function signUp(_: SignUpState, form: FormData): Promise<SignUpStat
     await setToken(res.owner_token);
     return { token: res.owner_token };
   } catch (err) {
+    if (err instanceof ApiError && err.code === "bad_gstin") {
+      return {
+        error:
+          "That GSTIN is not valid. Copy it exactly from your GST certificate: 15 characters, like 29ABCDE1234F1ZW. " +
+          "The last one is a check digit, so a single typo makes the whole number invalid.",
+      };
+    }
     if (err instanceof ApiError) return { error: err.message };
     throw err;
   }

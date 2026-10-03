@@ -296,6 +296,25 @@ func TestSignupValidation(t *testing.T) {
 	if e.Error.Code != "bad_gstin" {
 		t.Fatalf("code %q", e.Error.Code)
 	}
+	// The state decides every bill's tax, so it must be a real one, and a
+	// GSTIN's own: never a code no business can hold, never another state's.
+	for _, le := range []map[string]any{
+		{"name": "X", "state_code": "00"},
+		{"name": "X", "state_code": "28"}, // Andhra Pradesh before 2014; GST uses 37
+		{"name": "X", "state_code": "99"},
+		{"name": "X", "gstin": "37ABCDE1234F1ZZ", "state_code": "29"}, // a valid Andhra GSTIN, Karnataka picked
+		{"name": "X", "gstin": "28ABCDE1234F1ZY"},                     // check digit fine, state not in use
+	} {
+		e.Error.Code = ""
+		must(t, http.StatusBadRequest, "POST", "/v1/signup", "", map[string]any{
+			"business_name": "State Test", "owner": map[string]any{"name": "A", "phone": "+919876543210"},
+			"legal_entity": le, "outlet": map[string]any{"name": "Main"},
+		}, &e)
+		if e.Error.Code != "bad_state_code" {
+			t.Errorf("%v: code %q, want bad_state_code", le, e.Error.Code)
+		}
+	}
+	newRestaurant(t, "Andhra Kitchen", "37ABCDE1234F1ZZ", "37") // and the right pair is accepted
 	// Unknown fields are refused, so typos do not pass silently.
 	must(t, http.StatusBadRequest, "POST", "/v1/signup", "", map[string]any{"busines_name": "x"}, nil)
 	// No token, wrong kind of token.
