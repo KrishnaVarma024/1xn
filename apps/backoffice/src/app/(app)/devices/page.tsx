@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Badge, Card, EmptyState, PageHeader, Table, td, th } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getContext } from "@/lib/context";
+import { fyCode } from "@/lib/dates";
 import { dateTimeIST, roleLabel } from "@/lib/labels";
 import type { Device } from "@/lib/types";
 import { revokeDevice } from "./actions";
@@ -10,6 +11,7 @@ import { PairForm } from "./pair-form";
 export const metadata: Metadata = { title: "Devices" };
 
 export default async function DevicesPage() {
+  const fy = fyCode();
   const { outlet } = await getContext();
   const { devices } = await api<{ devices: Device[] }>(`/v1/outlets/${outlet.id}/devices`);
   return (
@@ -38,7 +40,9 @@ export default async function DevicesPage() {
                 <tr key={d.id} className={d.revoked_at ? "text-ink-faint" : ""} data-testid={`device-${d.name}`}>
                   <td className={`${td} font-medium`}>{d.name}</td>
                   <td className={td}>{roleLabel[d.role] ?? d.role}</td>
-                  <td className={`${td} font-mono`}>{d.role === "pos" ? `${d.invoice_prefix}-…` : "—"}</td>
+                  <td className={`${td} font-mono`} title={d.role === "pos" ? `This till numbers its bills ${d.invoice_prefix}-${fy}-000001, 000002, … afresh each financial year` : undefined}>
+                    {d.role === "pos" ? `${d.invoice_prefix}-${fy}-…` : "—"}
+                  </td>
                   <td className={td}>{dateTimeIST(d.registered_at)}</td>
                   <td className={td}>{d.last_device_seq}</td>
                   <td className={`${td} text-right`}>

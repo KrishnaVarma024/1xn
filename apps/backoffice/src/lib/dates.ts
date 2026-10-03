@@ -25,3 +25,14 @@ export function shiftDay(day: string, by: number): string {
   t.setUTCDate(t.getUTCDate() + by);
   return t.toISOString().slice(0, 10);
 }
+
+/**
+ * The Indian financial year (1 April to 31 March) as its invoice code:
+ * 3 Oct 2026 is "2627". India time decides, so 00:30 on 1 April is already
+ * the new year (the same rule as the API's gst.FY).
+ */
+export function fyCode(at: Date = new Date()): string {
+  const ist = new Date(at.getTime() + 5.5 * 3600e3);
+  const start = ist.getUTCMonth() >= 3 ? ist.getUTCFullYear() : ist.getUTCFullYear() - 1;
+  return `${String(start % 100).padStart(2, "0")}${String((start + 1) % 100).padStart(2, "0")}`;
+}

@@ -21,7 +21,7 @@ export default async function TablesPage() {
       )}
       <div className="space-y-6">
         {menu.floors.map((f) => (
-          <Card key={f.id} title={f.name} actions={<span className="text-xs text-ink-faint">{f.tables.filter((t) => t.active).length} in use</span>}>
+          <Card key={f.id} title={f.name} actions={<span className="text-xs text-ink-faint">{switchedOn(f.tables)}</span>}>
             <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
               {f.tables.map((t) => (
                 <div
@@ -62,4 +62,12 @@ export default async function TablesPage() {
       </div>
     </>
   );
+}
+
+// "6 tables", or "5 of 6 switched on". Not "in use": on the live floor that
+// means tables with guests at them.
+function switchedOn(tables: { active: boolean }[]): string {
+  const on = tables.filter((t) => t.active).length;
+  if (on === tables.length) return `${on} ${on === 1 ? "table" : "tables"}`;
+  return `${on} of ${tables.length} switched on`;
 }

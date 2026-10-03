@@ -111,6 +111,8 @@ test("a new restaurant signs up and builds its menu, tables and devices", async 
   await addTable.getByRole("button", { name: "Add table" }).click();
   await page.getByTestId("table-G2").getByRole("button", { name: "Switch off" }).click();
   await expect(page.getByTestId("table-G2")).toContainText("Off");
+  // "Switched on", not "in use": the live floor uses "in use" for tables with guests.
+  await expect(page.getByText("1 of 2 switched on")).toBeVisible();
 
   // Devices: a pairing code, used by a "phone" through the API.
   await page.getByRole("link", { name: "Devices" }).click();
