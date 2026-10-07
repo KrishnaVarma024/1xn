@@ -61,6 +61,18 @@ The floor is the **highest** seq deleted, not the lowest kept. Seqs are handed o
 
 The floor is per tenant, but a device pulls only its own outlet's changes. So a pull that has caught up moves the cursor to the tenant's latest seq, even when its outlet had nothing new. Otherwise a till at a quiet outlet would keep an old cursor and be told "offline too long" while it was online all along.
 
+## When the till cannot close its shift
+
+A till that is lost, stolen or broken never sends `shift.closed`, so its shift stays open and every Z report of that day asks the owner to acknowledge it. The owner revokes the till (Devices), counts the drawer, and closes the shift on the Day close page: `POST /v1/outlets/{id}/shifts/{shift}/close`. The maths is the till's: expected cash from the stored bills and cash moves, the difference to 5900, a `cash_difference` alert.
+
+Why only a **revoked** till (ADR 0017)? A working till may be offline with bills, cash moves, even its own count not yet sent. If the owner counted the drawer in the meantime, each of those would arrive into a shift that is already closed. The first version allowed it, and the review proved what happens: a safe drop the cashier made before the owner counted was refused, so the drawer looked ₹1,000 short and the books lost money that was sitting in the safe; and when the cashier had already counted on the till (exactly) and the next shift had begun, the owner's later count of a drawer holding the next shift's cash won, the next shift was refused, and an exact evening became a ₹700 loss. Two people counted one drawer, and no rule can say afterwards whose count was right.
+
+Revoking ends that. The sync gateway checks `revoked_at` after it locks the device row, and the revoke updates that same row, so once a revoke commits no op from that till can apply: everything the shift will ever have is already on the server. The owner's count is then simply the last word. The count's window ends at the latest bill or cash move the till recorded, or now if later, because a till whose clock runs fast stamps its last bills "in the future" and they must not fall outside every drawer.
+
+This is a common shape for "two writers, one record" problems: rather than merge conflicting writes after the fact, make sure only one writer can exist. Here the revoke is the hand-over.
+
+The rest follows the patterns of this note and note 08: an idempotency id with a request fingerprint (a double click closes once, a reused id is refused); the close writes the tenant's `sync_state` row so a day close that took its snapshot first is retried; a close in a locked month is kept and marked `blocked`; closing a drawer of a day already closed raises `shift_after_day_close`.
+
 ## What the review broke
 
 A second agent attacked this slice and proved ten bugs, each with a failing test (`internal/e2e/dayclose_review_test.go`). The ones worth remembering:
@@ -85,6 +97,8 @@ The others: cash moves dated outside their shift (now refused), drawer entries k
 | `TestPullCursorExpired` | pruning on close, the floor, 410 below it, catching up at it, bootstrap still complete |
 | `TestLateCashCorrectsTheDrawer` | a cash bill after the count corrects the shift and the books, once |
 | `TestReviewF1` to `F10` | the ten review findings above stay fixed |
+| `TestBackOfficeClosesAShift`, `TestBackOfficeCloseNeedsARevokedTill`, `TestBackOfficeShiftCloseGuards`, `TestBackOfficeShiftCloseRace` | closing a revoked till's shift in the back office: the till's maths, booked once, replays, reused ids, a working till refused, a fast till clock, two people at once |
+| `TestReviewC1` to `C7` | the second review's findings stay fixed (shift_close_review_test.go) |
 | `TestDayCloseGuards` | other tenants get 404, impossible dates 400, a day that has not started cannot be closed, a device cannot read the report |
 | `e2e/dayclose.spec.ts` | the owner's view: Z report, close, acknowledge, a stale page refused and refreshed, amended banner |
 

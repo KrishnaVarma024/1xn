@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -382,19 +381,14 @@ func applyShiftClosed(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	}
 	var denoms []byte
 	if len(p.Denominations) > 0 {
-		var sum int64
-		for k, n := range p.Denominations {
-			if denominations[k] == 0 || n < 0 || n > 1_000_000 {
-				return syncop.Applied{}, reject("bad_payload", fmt.Sprintf("denomination %q or its count is not valid", k))
+		var problem string
+		if denoms, problem = denominationsJSON(p.Denominations, p.CountedPaise); problem != "" {
+			code := "denominations_mismatch"
+			if strings.HasPrefix(problem, "denomination ") {
+				code = "bad_payload"
 			}
-			v, _ := strconv.ParseInt(k, 10, 64)
-			sum += v * 100 * n
+			return syncop.Applied{}, reject(code, problem)
 		}
-		if sum != p.CountedPaise {
-			return syncop.Applied{}, reject("denominations_mismatch",
-				fmt.Sprintf("the notes and coins add up to %d paise but counted_paise is %d", sum, p.CountedPaise))
-		}
-		denoms, _ = json.Marshal(p.Denominations)
 	}
 
 	seq, err := a.NextSeq()

@@ -3,21 +3,25 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { PrintButton } from "@/components/print-button";
-import { Badge, Card, EmptyState, Input, LinkButton, PageHeader, Stat, Table, buttonClass, td, th } from "@/components/ui";
+import { Badge, Card, EmptyState, Field, Input, LinkButton, PageHeader, Stat, Table, buttonClass, td, th } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getContext } from "@/lib/context";
 import { isRealDay, longDate, shiftDay } from "@/lib/dates";
 import { amendmentLabel, cashMoveLabel, channelLabel, dateTimeIST, methodLabel, timeIST } from "@/lib/labels";
 import { formatPaise, formatRate } from "@/lib/money";
-import type { DayList, DayView, Shift, ZReport } from "@/lib/types";
-import { closeDay } from "./actions";
+import { newDocId } from "@/lib/ids";
+import type { DayList, DayView, OpenShift, Shift, ZReport } from "@/lib/types";
+import { closeDay, closeShiftHere } from "./actions";
 
 export const metadata: Metadata = { title: "Day close" };
 
 export default async function DayPage({ searchParams }: PageProps<"/day">) {
-  const { date, view } = await searchParams;
+  const { date, view, closed, meanwhile } = await searchParams;
   const { outlet } = await getContext();
-  const list = await api<DayList>(`/v1/outlets/${outlet.id}/days`);
+  const [list, open] = await Promise.all([
+    api<DayList>(`/v1/outlets/${outlet.id}/days`),
+    api<{ shifts: OpenShift[] }>(`/v1/outlets/${outlet.id}/shifts`),
+  ]);
   const day = isRealDay(date) ? date : list.today;
   const v = await api<DayView>(`/v1/outlets/${outlet.id}/days/${day}`);
   // A closed day shows the report as it was closed, unless the owner asks
@@ -55,6 +59,9 @@ export default async function DayPage({ searchParams }: PageProps<"/day">) {
       />
 
       <Status v={v} live={live} day={day} />
+
+      <JustClosed shift={v.report.shifts.find((s) => s.id === closed && s.closed_at)} meanwhile={meanwhile === "1"} />
+      <OpenShifts shifts={open.shifts} />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Sales" value={formatPaise(r.sales.grand_total)} hint={`${r.sales.bills} ${r.sales.bills === 1 ? "bill" : "bills"} · including GST`} />
@@ -332,6 +339,99 @@ function Status({ v, live, day }: { v: DayView; live: boolean; day: string }) {
   );
 }
 
+/**
+ * The shift just closed here (after the redirect), with its result; or, when
+ * someone else closed it first, that this count was not used.
+ */
+function JustClosed({ shift: s, meanwhile }: { shift?: Shift; meanwhile: boolean }) {
+  if (!s) return null;
+  const d = s.difference ?? 0;
+  const result = d === 0 ? "The drawer was exact." : `The drawer was ${formatPaise(Math.abs(d))} ${d < 0 ? "short" : "over"}.`;
+  if (meanwhile) {
+    return (
+      <p role="status" className="mb-6 rounded-lg border border-marigold-400/50 bg-marigold-50 px-4 py-3 text-sm text-marigold-700 print:hidden">
+        This shift was closed meanwhile by {s.closed_by}, so your count was not used. {result} See {s.device_name} under Cash drawers.
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="mb-6 rounded-lg border border-curry-700/30 bg-curry-50 px-4 py-3 text-sm text-curry-700 print:hidden">
+      {s.device_name}: {s.opened_by}&apos;s shift is closed. {result}
+      {d !== 0 && " The difference is in the books."}
+    </p>
+  );
+}
+
+/**
+ * Shifts still open, whatever their day. A till closes its own shift; when it
+ * cannot (revoked, lost, broken, or the cashier left), the owner counts the
+ * drawer and closes the shift here.
+ */
+function OpenShifts({ shifts }: { shifts: OpenShift[] }) {
+  if (shifts.length === 0) return null;
+  return (
+    <Card title={`${shifts.length === 1 ? "A shift is" : `${shifts.length} shifts are`} still open`} className="mb-6 print:hidden">
+      <ul className="space-y-4">
+        {shifts.map((s) => (
+          <li key={s.id} data-testid={`open-shift-${s.device_name}`} className="rounded-lg border border-line p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="font-medium">{s.device_name}</span> <span className="text-ink-soft">· {s.opened_by}</span>
+                {s.device_revoked && (
+                  <span className="ml-2">
+                    <Badge tone="bad">Till revoked</Badge>
+                  </span>
+                )}
+                <div className="text-xs text-ink-soft">
+                  Opened {dateTimeIST(s.opened_at)} · trading day {longDate(s.business_date)}
+                </div>
+              </div>
+              <div className="text-right text-sm tabular-nums">
+                <div className="text-xs text-ink-soft">Should hold now</div>
+                <div className="font-medium">{formatPaise(s.expected)}</div>
+              </div>
+            </div>
+            {s.device_revoked ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-sm font-medium text-neel-700">Count the drawer and close it here</summary>
+                <p className="mt-2 text-xs text-ink-soft">
+                  This till is revoked: it can send nothing more, so this count is the last word. The drawer should hold{" "}
+                  {formatPaise(s.expected)}: float {formatPaise(s.opening_float)} + cash sales {formatPaise(s.cash_sales)}
+                  {paidOut(s) > 0 && <> − paid out {formatPaise(paidOut(s))}</>}
+                  {s.to_safe > 0 && <> − to safe {formatPaise(s.to_safe)}</>}
+                  {s.from_safe > 0 && <> + from safe {formatPaise(s.from_safe)}</>}.
+                </p>
+                <ActionForm
+                  action={closeShiftHere.bind(null, s.id, newDocId(), s.business_date)}
+                  label={`Close ${s.device_name}'s shift`}
+                  className="mt-3 grid gap-3 sm:grid-cols-[12rem_1fr_auto] sm:items-end"
+                >
+                  <Field label="Cash counted (₹)">
+                    <Input name="counted" inputMode="decimal" required placeholder="2,450" />
+                  </Field>
+                  <Field label="Why here, not on the till">
+                    <Input name="note" required maxLength={200} placeholder="Till lost; counted by the manager" />
+                  </Field>
+                  <SubmitButton pendingText="Closing…">Close the shift</SubmitButton>
+                </ActionForm>
+              </details>
+            ) : (
+              <p className="mt-2 text-xs text-ink-soft">
+                Close it on the till: count the drawer there. The till may be offline with bills it has not sent yet, so only it can
+                close this shift. If the till is lost or broken,{" "}
+                <Link href="/devices" className="font-medium text-neel-700 underline">
+                  revoke it
+                </Link>{" "}
+                first; then you can count the drawer and close the shift here.
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 function Drawers({ r }: { r: ZReport }) {
   if (r.shifts.length === 0) {
     return (
@@ -364,6 +464,11 @@ function Drawers({ r }: { r: ZReport }) {
                 <div className="text-xs text-ink-soft">
                   {s.opened_by} · {timeIST(s.opened_at)}–{s.closed_at ? timeIST(s.closed_at) : "open"}
                 </div>
+                {s.closed_from === "back_office" && (
+                  <div className="text-xs text-marigold-700">
+                    Counted in the back office by {s.closed_by}: {s.close_note}
+                  </div>
+                )}
                 {moves(s).map((m, i) => (
                   <div key={i} className="text-xs text-ink-faint">
                     {cashMoveLabel[m.kind]} {formatPaise(m.amount)} · {m.reason}

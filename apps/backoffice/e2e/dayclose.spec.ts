@@ -88,7 +88,7 @@ async function till(request: APIRequestContext, o: Owner) {
       },
     };
   };
-  return { push, bill };
+  return { push, bill, deviceId: dev.device_id as string };
 }
 
 /** The trading day now: it starts at 04:00 in India. */
@@ -193,4 +193,43 @@ test("an impossible ?date on the day close page falls back to today", async ({ p
     await expect(page.getByRole("heading", { name: "Day close" })).toBeVisible();
     await expect(page.getByText("This page could not load")).toHaveCount(0);
   }
+});
+
+test("an owner counts a revoked till's drawer and closes its shift from the back office", async ({ page, request }) => {
+  const o = await signUp(request, "Lost Till Cafe");
+  const t = await till(request, o);
+  const day = tradingDay();
+  const ago = (min: number) => new Date(Date.now() - min * 60e3);
+  // Float 1,000 + two thalis in cash (210) = 1,210 in the drawer.
+  await t.push(
+    { type: "shift.opened", payload: { shift_id: uuid7(), business_date: day, opened_at: ago(120).toISOString(), opened_by: "Vikram", opening_float_paise: 100000 } },
+    t.bill(ago(90), day),
+    t.bill(ago(60), day),
+  );
+  await asOwner(request, o, "POST", `/v1/devices/${t.deviceId}/revoke`);
+
+  await signIn(page, o.token);
+  await page.goto("/day");
+  const open = page.getByTestId("open-shift-Counter 1");
+  await expect(page.getByText("A shift is still open")).toBeVisible();
+  await expect(open).toContainText("Till revoked");
+  await expect(open).toContainText("₹1,210.00");
+  await expect(page.getByRole("list", { name: "Warnings" })).toContainText("revoke it and close the shift below");
+
+  await open.getByText("Count the drawer and close it here").click();
+  const form = page.getByRole("form", { name: "Close Counter 1's shift" });
+  await form.getByLabel("Cash counted (₹)").fill("1,160");
+  await form.getByLabel("Why here, not on the till").fill("   "); // blank, past the browser's own check
+  await form.getByRole("button", { name: "Close the shift" }).click();
+  await expect(form.getByRole("alert")).toContainText("Say why"); // a reason is required
+  await form.getByLabel("Why here, not on the till").fill("Till stolen; counted by Meera");
+  await form.getByRole("button", { name: "Close the shift" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Vikram's shift is closed" })).toContainText("₹50.00 short");
+  await expect(page.getByText("A shift is still open")).toHaveCount(0);
+  const drawers = page.locator("section", { hasText: "Cash drawers" });
+  await expect(drawers.getByText("₹50.00 short")).toBeVisible();
+  await expect(drawers.getByText("Counted in the back office by Meera: Till stolen; counted by Meera")).toBeVisible();
+  await page.getByRole("link", { name: "Books" }).click();
+  await expect(page.getByText("Balanced")).toBeVisible();
+  await expect(page.getByText("Cash over and short")).toBeVisible();
 });

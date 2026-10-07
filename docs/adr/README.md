@@ -20,3 +20,4 @@ One file per decision: what we chose, why, and what it costs. Numbering follows 
 | 0014 | [The back office is a Next.js Backend-for-Frontend](0014-back-office-is-a-nextjs-bff.md) |
 | 0015 | [Day close: device shifts, a computed Z report, a guarded close](0015-day-close.md) |
 | 0016 | [Perpetual stock at weighted average cost, used by recipes](0016-perpetual-stock-at-average-cost.md) |
+| 0017 | [A shift is closed in the back office only when its till is revoked](0017-back-office-shift-close-needs-a-revoked-till.md) |

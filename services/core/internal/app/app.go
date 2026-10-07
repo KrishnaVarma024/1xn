@@ -76,6 +76,7 @@ func New(d *sql.DB) http.Handler {
 				r.Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
 				r.Get("/orders", orders.OpenOrdersHandler(d))
 				r.Mount("/days", dayclose.Routes(d))
+				r.Mount("/shifts", dayclose.ShiftRoutes(d))
 				r.Mount("/stock", stock.OutletRoutes(d))
 			})
 			r.Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))

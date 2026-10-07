@@ -193,6 +193,14 @@ export type Shift = {
   counted?: number;
   difference?: number;
   ledger_status?: string;
+  closed_from?: "back_office"; // counted in the back office, not on the till
+  close_note?: string;
+};
+
+/** A shift not counted yet, whatever its day, with what its drawer should hold so far. */
+export type OpenShift = Shift & {
+  business_date: string;
+  device_revoked: boolean;
 };
 
 export type ZReport = {

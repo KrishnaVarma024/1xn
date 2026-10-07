@@ -182,6 +182,8 @@ type Shift struct {
 	Counted      *int64     `json:"counted,omitempty"`    // closed shifts only
 	Difference   *int64     `json:"difference,omitempty"` // counted - expected: + over, - short
 	LedgerStatus string     `json:"ledger_status,omitempty"`
+	ClosedFrom   string     `json:"closed_from,omitempty"` // "back_office": the owner counted it there, not the till
+	CloseNote    string     `json:"close_note,omitempty"`  // why it was closed there
 }
 
 // CashMove is cash paid out of or into a drawer other than sales.
@@ -607,7 +609,8 @@ func shiftsOfDay(ctx context.Context, tx *sql.Tx, r *Report, d string, now time.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT s.id, s.device_id, coalesce(dv.name, ''), s.business_date, s.opened_by, s.opened_at, s.opening_float,
 		       coalesce(s.closed_by, ''), s.closed_at, s.counted_cash, coalesce(s.cash_sales, 0),
-		       coalesce(s.expected_cash, 0), s.difference, coalesce(s.ledger_status, '')
+		       coalesce(s.expected_cash, 0), s.difference, coalesce(s.ledger_status, ''),
+		       s.closed_by_user IS NOT NULL, coalesce(s.close_note, '')
 		FROM till_shift s LEFT JOIN device dv ON dv.id = s.device_id
 		WHERE s.outlet_id = $1 AND s.business_date = $2
 		ORDER BY s.opened_at, s.id`, r.OutletID, d)
@@ -620,10 +623,14 @@ func shiftsOfDay(ctx context.Context, tx *sql.Tx, r *Report, d string, now time.
 		var bizDate time.Time
 		var closed sql.NullTime
 		var counted, diff sql.NullInt64
+		var fromBackOffice bool
 		if err := rows.Scan(&s.ID, &s.DeviceID, &s.DeviceName, &bizDate, &s.OpenedBy, &s.OpenedAt, &s.OpeningFloat,
-			&s.ClosedBy, &closed, &counted, &s.CashSales, &s.Expected, &diff, &s.LedgerStatus); err != nil {
+			&s.ClosedBy, &closed, &counted, &s.CashSales, &s.Expected, &diff, &s.LedgerStatus, &fromBackOffice, &s.CloseNote); err != nil {
 			rows.Close()
 			return err
+		}
+		if fromBackOffice {
+			s.ClosedFrom = "back_office"
 		}
 		if closed.Valid {
 			s.ClosedAt, s.Counted, s.Difference = &closed.Time, &counted.Int64, &diff.Int64
@@ -717,7 +724,7 @@ func (r *Report) warn() {
 	}
 	for _, s := range r.Shifts {
 		if s.ClosedAt == nil {
-			add("open_shift", "check", "%s: %s's shift is still open. Count the drawer and close it on the till.", s.DeviceName, s.OpenedBy)
+			add("open_shift", "check", "%s: %s's shift is still open. Count the drawer and close it on the till; if the till is lost or broken, revoke it and close the shift below.", s.DeviceName, s.OpenedBy)
 		}
 	}
 	if n := r.OpenOrders.Orders; n > 0 {
