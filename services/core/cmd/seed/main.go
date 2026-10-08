@@ -50,7 +50,21 @@ Demo restaurant ready. Its bills are on business day %s.
 }
 
 type ref struct {
-	ID string `json:"id"`
+	ID      string `json:"id"`
+	Options []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"options,omitempty"` // a modifier group's options
+}
+
+// option is the id of a group's option by name.
+func (r ref) option(name string) string {
+	for _, o := range r.Options {
+		if o.Name == name {
+			return o.ID
+		}
+	}
+	panic("no option " + name) // the seed's own menu always has it
 }
 
 type menuItem struct {
@@ -98,7 +112,11 @@ type line struct {
 func (l line) payload() map[string]any {
 	mods := []map[string]any{}
 	for _, m := range l.Mods {
-		mods = append(mods, map[string]any{"name": m.Name, "price_paise": m.PricePaise})
+		mod := map[string]any{"name": m.Name, "price_paise": m.PricePaise}
+		if m.Ref != "" {
+			mod["option_id"] = m.Ref
+		}
+		mods = append(mods, mod)
 	}
 	return map[string]any{"line_id": l.ID, "item_id": l.Item.ID, "name": l.Item.Name, "qty": l.Qty,
 		"unit_price_paise": l.Item.Price, "tax_rate_bp": 500, "section_id": l.Item.Section, "course": 1, "modifiers": mods}
@@ -188,7 +206,9 @@ func seed() (token, businessDay string, err error) {
 	}
 	fmt.Println("  menu: 10 dishes, 3 kitchen sections, 2 add-on groups")
 
-	if err := seedStock(owner, outlet, items, businessDay); err != nil {
+	cheese := pricing.Modifier{Ref: addOns.option("Extra cheese"), Name: "Extra cheese", PricePaise: 4000}
+	butter := pricing.Modifier{Ref: addOns.option("Extra butter"), Name: "Extra butter", PricePaise: 2000}
+	if err := seedStock(owner, outlet, items, map[string]string{"Extra cheese": cheese.Ref, "Extra butter": butter.Ref}, businessDay); err != nil {
 		return "", "", err
 	}
 
@@ -276,7 +296,7 @@ func seed() (token, businessDay string, err error) {
 		return o, captain.push(ops...)
 	}
 
-	t1, err := open("T1", 4, 50, newLine("Paneer tikka", 1, pricing.Modifier{Name: "Extra cheese", PricePaise: 4000}),
+	t1, err := open("T1", 4, 50, newLine("Paneer tikka", 1, cheese),
 		newLine("Butter chicken", 2), newLine("Butter naan", 4), newLine("Sweet lassi", 2))
 	if err != nil {
 		return "", "", err
@@ -316,7 +336,7 @@ func seed() (token, businessDay string, err error) {
 	}
 
 	// T3 ate early and paid: a closed order and its bill.
-	t3Lines := []line{newLine("Dal makhani", 1), newLine("Garlic naan", 3), newLine("Sweet lassi", 1)}
+	t3Lines := []line{newLine("Dal makhani", 1, butter), newLine("Garlic naan", 3), newLine("Sweet lassi", 1)}
 	t3, err := open("T3", 3, 120, t3Lines...)
 	if err != nil {
 		return "", "", err
@@ -336,7 +356,8 @@ func seed() (token, businessDay string, err error) {
 			"amount_paise": 30_000, "reason": "Ice and lemons", "at": at(200)}),
 		till.bill(uuid.Nil, "", 0, at(90), businessDay, "cash", biryani...),
 		till.bill(t3, "T3", 3, at(70), businessDay, "upi", t3Lines...),
-		till.bill(uuid.Nil, "", 0, at(60), businessDay, "card", newLine("Chicken 65", 1), newLine("Masala chaas", 1)),
+		till.bill(uuid.Nil, "", 0, at(60), businessDay, "card", newLine("Chicken 65", 1), newLine("Paneer tikka", 1, cheese),
+			newLine("Masala chaas", 1)),
 		till.op("shift.closed", map[string]any{"shift_id": afternoon, "closed_at": at(55), "closed_by": "Asha",
 			"counted_paise": counted, "denominations": notes(counted)}),
 		till.op("shift.opened", map[string]any{"shift_id": evening, "business_date": businessDay,
@@ -430,11 +451,12 @@ func call(method, path, token string, body, out any) error {
 	return nil
 }
 
-// seedStock stocks the kitchen: ingredients, a recipe for every dish, the
-// morning's deliveries from three suppliers, and some cream that went sour.
-// Curd is bought short, so the afternoon's bills take it under its reorder
-// level and raise a low-stock alert.
-func seedStock(owner, outlet string, items map[string]menuItem, day string) error {
+// seedStock stocks the kitchen: ingredients, a recipe for every dish and
+// add-on, the morning's deliveries from three suppliers (rice and oil by the
+// bag and tin), a payment to the dairy, and some cream that went sour. Curd
+// is bought short, so the afternoon's bills take it under its reorder level
+// and raise a low-stock alert.
+func seedStock(owner, outlet string, items map[string]menuItem, addons map[string]string, day string) error {
 	post := func(path string, body any, out any) error { return call("POST", path, owner, body, out) }
 	type ingredient struct {
 		name, unit     string
@@ -449,6 +471,7 @@ func seedStock(owner, outlet string, items map[string]menuItem, day string) erro
 		{"Cream", "l", 1_000, 3_000, 60_000, "Bandra Meat & Dairy", "credit"},
 		{"Curd", "kg", 1_000, 1_200, 8_400, "Bandra Meat & Dairy", "credit"},
 		{"Milk", "l", 5_000, 10_000, 56_000, "Bandra Meat & Dairy", "credit"},
+		{"Cheese", "kg", 500, 2_000, 90_000, "Bandra Meat & Dairy", "credit"},
 		{"Basmati rice", "kg", 5_000, 10_000, 110_000, "Metro Wholesale", "bank"},
 		{"Maida flour", "kg", 5_000, 10_000, 45_000, "Metro Wholesale", "bank"},
 		{"Black dal", "kg", 2_000, 5_000, 70_000, "Metro Wholesale", "bank"},
@@ -474,7 +497,19 @@ func seedStock(owner, outlet string, items map[string]menuItem, day string) erro
 		if _, ok := purchases[s.supplier]; !ok {
 			suppliers = append(suppliers, s.supplier)
 		}
-		purchases[s.supplier] = append(purchases[s.supplier], map[string]any{"stock_item_id": it.ID, "qty": s.qty, "cost": s.cost})
+		line := map[string]any{"stock_item_id": it.ID, "qty": s.qty, "cost": s.cost}
+		// Rice comes in 10 kg bags and oil in 15 l tins: one of each.
+		if p, ok := map[string]map[string]any{
+			"Basmati rice": {"name": "Bag", "qty": 10_000},
+			"Cooking oil":  {"name": "Tin", "qty": 15_000},
+		}[s.name]; ok {
+			var pack ref
+			if err := post("/v1/stock/items/"+it.ID+"/packs", p, &pack); err != nil {
+				return err
+			}
+			line = map[string]any{"stock_item_id": it.ID, "pack_id": pack.ID, "packs": s.qty / int64(p["qty"].(int)), "cost": s.cost}
+		}
+		purchases[s.supplier] = append(purchases[s.supplier], line)
 		paidBy[s.supplier] = s.paid
 	}
 
@@ -500,6 +535,12 @@ func seedStock(owner, outlet string, items map[string]menuItem, day string) erro
 			return fmt.Errorf("recipe for %s: %w", dish, err)
 		}
 	}
+	for addon, r := range map[string][]any{"Extra cheese": {"Cheese", 30}, "Extra butter": {"Butter", 15}} {
+		lines := []map[string]any{{"stock_item_id": stockIDs[r[0].(string)], "qty": r[1]}}
+		if err := call("PUT", "/v1/stock/addon-recipes/"+addons[addon], owner, map[string]any{"lines": lines}, nil); err != nil {
+			return fmt.Errorf("recipe for %s: %w", addon, err)
+		}
+	}
 
 	invoice := 101
 	for _, s := range suppliers {
@@ -516,6 +557,28 @@ func seedStock(owner, outlet string, items map[string]menuItem, day string) erro
 	}, nil); err != nil {
 		return err
 	}
-	fmt.Println("  stock: 17 ingredients, recipes for every dish, 3 deliveries, 200 ml of cream wasted")
+	// The dairy delivered on credit; Rs 3,000 of it was paid by UPI.
+	var sup struct {
+		Suppliers []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"suppliers"`
+	}
+	if err := call("GET", "/v1/outlets/"+outlet+"/stock/suppliers", owner, nil, &sup); err != nil {
+		return err
+	}
+	var dairy string
+	for _, s := range sup.Suppliers {
+		if s.Name == "Bandra Meat & Dairy" {
+			dairy = s.ID
+		}
+	}
+	if err := post("/v1/outlets/"+outlet+"/stock/supplier-payments", map[string]any{
+		"id": ids.New(), "supplier_id": dairy, "amount": 300_000, "paid_by": "bank", "reference": "UPI 4521", "date": day,
+	}, nil); err != nil {
+		return err
+	}
+	fmt.Println("  stock: 18 ingredients, recipes for every dish and add-on, 3 deliveries (rice and oil by the bag and tin),")
+	fmt.Println("         Rs 3,000 paid to the dairy, 200 ml of cream wasted")
 	return nil
 }

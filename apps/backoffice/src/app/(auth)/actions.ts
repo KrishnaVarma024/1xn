@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { text, type FormState } from "@/lib/actions";
 import { clearSession, setToken } from "@/lib/session";
+import { normalisePhone } from "@/lib/phone";
 import { stateName } from "@/lib/states";
 import type { Me } from "@/lib/types";
 
@@ -76,16 +77,4 @@ export async function signUp(_: SignUpState, form: FormData): Promise<SignUpStat
 export async function signOut() {
   await clearSession();
   redirect("/sign-in");
-}
-
-// "98765 43210", "098765 43210" or "91 98765 43210" -> "+919876543210".
-// A number with + is kept as typed (the API checks it is E.164). Anything
-// else is refused rather than guessed: a guessed number gets someone else's
-// login codes.
-function normalisePhone(p: string): string | null {
-  const s = p.replace(/[\s()-]/g, "");
-  if (s.startsWith("+")) return s;
-  if (!/^\d+$/.test(s)) return null;
-  const local = s.length === 12 && s.startsWith("91") ? s.slice(2) : s.replace(/^0/, "");
-  return /^[6-9]\d{9}$/.test(local) ? `+91${local}` : null;
 }

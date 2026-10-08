@@ -310,7 +310,11 @@ export type StockItem = {
   unit_cost: number;
   last_cost: number;
   status: "ok" | "low" | "out" | "negative" | "new";
+  packs: Pack[]; // how it is bought: in use first
 };
+
+/** A way an item is bought: a 25 kg sack, a 15 l tin. A pack never changes size. */
+export type Pack = { id: string; stock_item_id: string; name: string; qty: number; active: boolean };
 
 export type StockList = { items: StockItem[]; value: number };
 
@@ -324,6 +328,8 @@ export type StockMove = {
   at: string;
   note?: string;
   invoice_no?: string;
+  pack?: string; // received in packs: which
+  packs?: number; // and how many
 };
 
 export type StockDoc = {
@@ -353,6 +359,53 @@ export type Dish = {
   food_cost_bp: number;
   margin: number;
   uncosted: number;
+};
+
+/** An add-on option ("Extra cheese") with what one portion of it uses. */
+export type Addon = {
+  id: string;
+  name: string;
+  group: string;
+  price: number;
+  net_price: number; // 0 when the dishes offering it are taxed at different rates
+  lines: RecipeLine[];
+  cost: number;
+  food_cost_bp: number;
+  uncosted: number;
+};
+
+export type Supplier = { id: string; name: string; phone?: string; gstin?: string };
+
+export type SupplierBalance = Supplier & {
+  owed: number; // deliveries on credit less payments
+  last_delivery?: string;
+  bought_30d: number;
+};
+
+export type SupplierList = { suppliers: SupplierBalance[]; owed: number };
+
+export type StatementLine = {
+  date: string;
+  kind: "delivery" | "payment";
+  id: string;
+  outlet_id: string;
+  reference?: string;
+  paid_by: "credit" | "safe" | "till" | "bank";
+  amount: number;
+  owed: number; // after this line
+};
+
+export type Statement = { supplier: Supplier; owed: number; lines: StatementLine[] };
+
+export type SupplierPayment = {
+  id: string;
+  supplier_id: string;
+  supplier: string;
+  date: string;
+  amount: number;
+  paid_by: "safe" | "till" | "bank";
+  reference?: string;
+  owed_after: number;
 };
 
 export type FoodCost = {

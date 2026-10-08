@@ -3,6 +3,7 @@ import Link from "next/link";
 const tabs = [
   { href: "/stock", label: "Items" },
   { href: "/stock/receive", label: "Receive goods" },
+  { href: "/stock/suppliers", label: "Suppliers" },
   { href: "/stock/waste", label: "Wastage" },
   { href: "/stock/count", label: "Count" },
   { href: "/stock/food-cost", label: "Food cost" },

@@ -7,8 +7,8 @@ import { getContext } from "@/lib/context";
 import { isRealDay } from "@/lib/dates";
 import { mustUUID } from "@/lib/ids";
 import { parseRupees } from "@/lib/money";
-import { parseQty, type Unit } from "@/lib/quantity";
-import type { StockList } from "@/lib/types";
+import { formatQty, parseQty, type Unit } from "@/lib/quantity";
+import type { StockItem, StockList } from "@/lib/types";
 
 const units: Unit[] = ["kg", "l", "pc"];
 
@@ -17,10 +17,22 @@ const RECIPE_MAX = 50;
 const RECIPE_ROWS = RECIPE_MAX;
 
 /** The tenant's stock items, to know each one's unit when reading quantities. */
-async function itemUnits(): Promise<Map<string, Unit>> {
+async function stockItems(): Promise<Map<string, StockItem>> {
   const { outlet } = await getContext();
   const list = await api<StockList>(`/v1/outlets/${outlet.id}/stock`);
-  return new Map(list.items.map((i) => [i.id, i.unit]));
+  return new Map(list.items.map((i) => [i.id, i]));
+}
+
+async function itemUnits(): Promise<Map<string, Unit>> {
+  return new Map([...(await stockItems())].map(([id, i]) => [id, i.unit]));
+}
+
+/** How many packs: a whole number, 1 to 100,000 (the API's limit). */
+function packCount(input: string): number | null {
+  const m = /^(\d{1,3}(?:,\d{3})*|\d+)$/.exec(input.trim());
+  if (!m) return null;
+  const n = Number(m[1].replaceAll(",", ""));
+  return n >= 1 && n <= 100_000 ? n : null;
 }
 
 function qty(form: FormData, name: string, unit: Unit, what: string): number {
@@ -66,7 +78,13 @@ function day(form: FormData): string | undefined {
   return d;
 }
 
-/** Purchase rows are line0..lineN: item, quantity and cost; empty rows are skipped. */
+type PurchaseLine = { stock_item_id: string; qty?: number; pack_id?: string; packs?: number; cost: number };
+
+/**
+ * Purchase rows are item0..itemN with qty and cost; empty rows are skipped.
+ * An item row's value is the item's id, or "<item id>|<pack id>" when it was
+ * received in packs, and then the quantity is how many packs.
+ */
 export async function recordPurchase(docId: string, _: FormState, form: FormData): Promise<FormState> {
   return attempt(async () => {
     mustUUID(docId);
@@ -74,20 +92,30 @@ export async function recordPurchase(docId: string, _: FormState, form: FormData
     if (!supplier) fail("Who delivered it? Add the supplier.");
     const paidBy = text(form, "paid_by");
     if (!["safe", "till", "bank", "credit"].includes(paidBy)) fail("How was it paid?");
-    const unitOf = await itemUnits();
-    const lines: { stock_item_id: string; qty: number; cost: number }[] = [];
+    const items = await stockItems();
+    const lines: PurchaseLine[] = [];
     for (let i = 0; i < 20; i++) {
-      const item = text(form, `item${i}`);
+      const pick = text(form, `item${i}`);
       const q = text(form, `qty${i}`);
       const c = text(form, `cost${i}`);
-      if (!item && !q && !c) continue;
-      const unit = unitOf.get(item);
-      if (!unit) fail(`Row ${i + 1}: pick an item.`);
-      const n = qty(form, `qty${i}`, unit, `Row ${i + 1}`);
-      if (n <= 0) fail(`Row ${i + 1}: the quantity must be above zero.`);
+      if (!pick && !q && !c) continue;
+      const [itemId, packId] = pick.split("|");
+      const item = items.get(itemId);
+      if (!item) fail(`Row ${i + 1}: pick an item.`);
       const cost = parseRupees(c);
+      if (packId) {
+        const pack = item.packs.find((p) => p.id === packId && p.active);
+        if (!pack) fail(`Row ${i + 1}: that pack is no longer in use. Reload the page and pick again.`);
+        const n = packCount(q);
+        if (n === null) fail(`Row ${i + 1}: say how many packs (${pack.name}), as a whole number like 2.`);
+        if (cost === null) fail(`Row ${i + 1}: write what it cost, like 450 or 1,200.50.`);
+        lines.push({ stock_item_id: item.id, pack_id: pack.id, packs: n, cost });
+        continue;
+      }
+      const n = qty(form, `qty${i}`, item.unit, `Row ${i + 1}`);
+      if (n <= 0) fail(`Row ${i + 1}: the quantity must be above zero.`);
       if (cost === null) fail(`Row ${i + 1}: write what it cost, like 450 or 1,200.50.`);
-      lines.push({ stock_item_id: item, qty: n, cost });
+      lines.push({ stock_item_id: item.id, qty: n, cost });
     }
     if (lines.length === 0) fail("Add at least one item.");
     const { outlet } = await getContext();
@@ -97,6 +125,34 @@ export async function recordPurchase(docId: string, _: FormState, form: FormData
     });
     revalidatePath("/stock", "layout");
     return `Received from ${supplier}: ${lines.length} ${lines.length === 1 ? "item" : "items"} booked into stock.`;
+  });
+}
+
+/** A new way to buy an item: "Sack" of "25 kg". */
+export async function addPack(itemId: string, unit: Unit, _: FormState, form: FormData): Promise<FormState> {
+  return attempt(async () => {
+    mustUUID(itemId);
+    if (!units.includes(unit)) fail("Reload the page and try again.");
+    const name = text(form, "name");
+    if (!name) fail("Name the pack, like Sack, Tin or Crate.");
+    const size = qty(form, "size", unit, "Size");
+    if (size <= 0) fail("A pack holds more than nothing.");
+    await api(`/v1/stock/items/${itemId}/packs`, { method: "POST", body: { name, qty: size } });
+    revalidatePath(`/stock/${itemId}`);
+    revalidatePath("/stock/receive");
+    return `${name} of ${formatQty(size, unit)} added. Pick it when you receive goods.`;
+  });
+}
+
+/** Packs are switched off, never edited: deliveries in the history name them. */
+export async function setPackActive(itemId: string, packId: string, active: boolean): Promise<FormState> {
+  return attempt(async () => {
+    mustUUID(itemId);
+    mustUUID(packId);
+    await api(`/v1/stock/packs/${packId}`, { method: "PATCH", body: { active } });
+    revalidatePath(`/stock/${itemId}`);
+    revalidatePath("/stock/receive");
+    return active ? "Back in use." : "Switched off. Its past deliveries keep its name.";
   });
 }
 
@@ -156,25 +212,41 @@ export async function recordCount(docId: string, _: FormState, form: FormData): 
 }
 
 /** Recipe rows are ing0..ingN with qty0..qtyN; empty rows are dropped. */
+async function recipeLines(form: FormData): Promise<{ stock_item_id: string; qty: number }[]> {
+  const unitOf = await itemUnits();
+  const lines: { stock_item_id: string; qty: number }[] = [];
+  for (let i = 0; i < RECIPE_ROWS; i++) {
+    const item = text(form, `ing${i}`);
+    const q = text(form, `qty${i}`);
+    if (!item && !q) continue;
+    const unit = unitOf.get(item);
+    if (!unit) fail(`Row ${i + 1}: pick an ingredient.`);
+    const n = qty(form, `qty${i}`, unit, `Row ${i + 1}`);
+    if (n <= 0) fail(`Row ${i + 1}: the quantity must be above zero.`);
+    lines.push({ stock_item_id: item, qty: n });
+  }
+  if (form.has(`ing${RECIPE_ROWS}`)) fail(`A recipe has at most ${RECIPE_MAX} ingredients.`);
+  if (lines.length > RECIPE_MAX) fail(`A recipe has at most ${RECIPE_MAX} ingredients.`);
+  return lines;
+}
+
 export async function saveRecipe(dishId: string, _: FormState, form: FormData): Promise<FormState> {
   return attempt(async () => {
     mustUUID(dishId);
-    const unitOf = await itemUnits();
-    const lines: { stock_item_id: string; qty: number }[] = [];
-    for (let i = 0; i < RECIPE_ROWS; i++) {
-      const item = text(form, `ing${i}`);
-      const q = text(form, `qty${i}`);
-      if (!item && !q) continue;
-      const unit = unitOf.get(item);
-      if (!unit) fail(`Row ${i + 1}: pick an ingredient.`);
-      const n = qty(form, `qty${i}`, unit, `Row ${i + 1}`);
-      if (n <= 0) fail(`Row ${i + 1}: the quantity must be above zero.`);
-      lines.push({ stock_item_id: item, qty: n });
-    }
-    if (form.has(`ing${RECIPE_ROWS}`)) fail(`A recipe has at most ${RECIPE_MAX} ingredients.`);
-    if (lines.length > RECIPE_MAX) fail(`A recipe has at most ${RECIPE_MAX} ingredients.`);
+    const lines = await recipeLines(form);
     await api(`/v1/stock/recipes/${dishId}`, { method: "PUT", body: { lines } });
     revalidatePath("/recipes");
     return lines.length ? "Recipe saved." : "Recipe removed.";
+  });
+}
+
+/** An add-on's recipe: what one portion of "Extra cheese" uses, on top of the dish. */
+export async function saveAddonRecipe(optionId: string, _: FormState, form: FormData): Promise<FormState> {
+  return attempt(async () => {
+    mustUUID(optionId);
+    const lines = await recipeLines(form);
+    await api(`/v1/stock/addon-recipes/${optionId}`, { method: "PUT", body: { lines } });
+    revalidatePath("/recipes");
+    return lines.length ? "Add-on recipe saved." : "Add-on recipe removed.";
   });
 }

@@ -12,7 +12,7 @@ The order matters. Doing the same steps in a different order changes paise.
 
 **R0. Limits.** Rates are 0 to 4,000 bp (0% to 40%, the top GST rate), quantities 1 to 100,000, unit prices up to ₹1 crore, bills up to ₹1,000 crore. The limits keep every product inside 64 bits. The rate cap also keeps inclusive back-calculation sane: at an absurd 100% rate, a one-paisa line would produce a negative goods value.
 
-**R1. Gross.** For each line: `gross = qty × (unit price + sum of modifier prices)`. Modifiers take the line's tax rate.
+**R1. Gross.** For each line: `gross = qty × (unit price + sum of modifier prices)`. Modifiers take the line's tax rate. A modifier may carry `ref`, the add-on option's id: like a line's `ref` it is echoed and never priced (stock uses it to find the add-on's recipe, note 08).
 
 **R2. Line discount.** A line may have a percent discount (`percent_bp`, rounded half up) or a fixed amount (`amount_paise`, never more than the line). Not both.
 

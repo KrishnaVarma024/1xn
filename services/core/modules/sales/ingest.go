@@ -333,6 +333,9 @@ func ApplySettledBill(ctx context.Context, tx *sql.Tx, a syncop.ApplyContext) (s
 	sold := make([]stock.Sold, len(in.Lines))
 	for i, l := range in.Lines {
 		sold[i] = stock.Sold{ItemRef: l.Ref, Qty: l.Qty}
+		for _, m := range l.Modifiers {
+			sold[i].AddonRefs = append(sold[i].AddonRefs, m.Ref)
+		}
 	}
 	if err := stock.ConsumeForBill(ctx, tx, a.Device.TenantID, a.Device.OutletID, billID, bizDate, issued, sold); err != nil {
 		return syncop.Applied{}, err

@@ -192,7 +192,7 @@ test("a seeded evening: live floor, bills, a bill, day close, stock, books and a
 
   await page.goto(`/bills?date=${day}`);
   await expect(page.getByRole("row")).toHaveCount(4); // header + 3 bills
-  await expect(page.getByText("₹1,659.00")).toBeVisible();
+  await expect(page.getByText("₹2,058.00")).toBeVisible();
   await page.getByRole("link", { name: /-000002$/ }).click();
   await expect(page.getByRole("heading", { name: /Invoice .*-000002/ })).toBeVisible();
   await expect(page.getByText("Server agrees with the till")).toBeVisible();
@@ -212,14 +212,19 @@ test("a seeded evening: live floor, bills, a bill, day close, stock, books and a
   await expect(warnings).toContainText("3 orders are still open (R1, T1, T2)");
   await expect(page.locator("section", { hasText: "Invoice numbers" }).getByText("No gaps")).toBeVisible();
 
-  // The kitchen: curd ran low on the afternoon's bills; every dish is costed.
+  // The kitchen: curd ran low on the afternoon's bills; every dish and both
+  // paid add-ons are costed; one paneer tikka (with extra cheese) was billed.
   await page.goto("/stock");
   await expect(page.getByTestId("stock-Curd")).toContainText("Low");
-  await expect(page.getByTestId("stock-Paneer")).toContainText("5 kg");
+  await expect(page.getByTestId("stock-Paneer")).toContainText("4.8 kg");
+  await expect(page.getByTestId("stock-Cheese")).toContainText("1.97 kg");
   await page.goto("/recipes");
   await expect(page.getByText("10 of 10")).toBeVisible();
+  await expect(page.getByText("2 of 5")).toBeVisible();
   await page.goto(`/stock/food-cost?from=${day}&to=${day}`);
-  await expect(page.getByText("₹1,580.00")).toBeVisible(); // food sales without GST
+  await expect(page.getByText("₹1,960.00")).toBeVisible(); // food sales without GST
+  await page.goto("/stock/suppliers");
+  await expect(page.getByTestId("supplier-Bandra Meat & Dairy")).toContainText("₹4,144.00"); // ₹7,144 on credit, ₹3,000 paid
 
   await page.getByRole("link", { name: "Books" }).click();
   await expect(page.getByText("Balanced")).toBeVisible();

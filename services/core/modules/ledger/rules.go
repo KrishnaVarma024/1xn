@@ -214,6 +214,33 @@ func StockPurchaseEntry(tenantID, legalEntityID, outletID, docID uuid.UUID, cost
 	}, nil
 }
 
+// SupplierPaymentEntry pays a supplier for deliveries bought on credit.
+//
+//	Dr payable to suppliers (2100)   amount
+//	Cr safe / bank / till payouts    amount
+//
+// A payment from a till goes through clearing account 1150, like a delivery
+// paid from a till: the till's own "supplier" cash move debits it.
+func SupplierPaymentEntry(tenantID, legalEntityID, outletID, paymentID uuid.UUID, amount int64, paid string,
+	date time.Time, memo string) (Entry, error) {
+	acct, ok := paidBy[paid]
+	if !ok || paid == "credit" {
+		return Entry{}, fmt.Errorf("ledger: unknown payment %q for a supplier", paid)
+	}
+	if amount <= 0 {
+		return Entry{}, fmt.Errorf("ledger: a supplier payment must be positive")
+	}
+	outlet := outletID
+	return Entry{
+		TenantID: tenantID, LegalEntityID: legalEntityID, SourceType: "supplier_payment", SourceEventID: paymentID,
+		EntryDate: date, Memo: memo,
+		Lines: []Line{
+			{AccountCode: AcctPayables, Amount: amount, OutletID: &outlet},
+			{AccountCode: acct, Amount: -amount, OutletID: &outlet},
+		},
+	}, nil
+}
+
 // StockOutEntry books stock that left the store at its value: used by bills
 // (cost of food sold), thrown away (wastage), or missing at a count (count
 // differences). A negative value is stock found, and flips the signs.

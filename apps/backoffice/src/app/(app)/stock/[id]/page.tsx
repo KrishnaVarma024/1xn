@@ -10,7 +10,7 @@ import { dateTimeIST, stockKindLabel } from "@/lib/labels";
 import { formatPaise } from "@/lib/money";
 import { formatQty, perUnit, qtyToFriendlyInput } from "@/lib/quantity";
 import type { StockItem, StockMove } from "@/lib/types";
-import { updateStockItem } from "../actions";
+import { addPack, setPackActive, updateStockItem } from "../actions";
 import { StockStatus } from "../status";
 import { StockTabs } from "../tabs";
 
@@ -61,6 +61,47 @@ export default async function StockItemPage({ params }: PageProps<"/stock/[id]">
         </ActionForm>
       </Card>
 
+      <Card title="Packs" className="mb-6">
+        <p className="mb-3 text-sm text-ink-soft">
+          How {item.name} is bought: a sack, a tin, a crate. Receive &ldquo;2 sacks&rdquo; and the store gets twice the sack&apos;s size.
+          A pack never changes size; for a new size add a new pack and stop using the old one.
+        </p>
+        {item.packs.length > 0 && (
+          <ul className="mb-4 divide-y divide-line rounded-lg border border-line">
+            {item.packs.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm" data-testid={`pack-${p.name}`}>
+                <span className={p.active ? "" : "text-ink-faint"}>
+                  <span className="font-medium">{p.name}</span> of {formatQty(p.qty, item.unit)}
+                  {!p.active && <span className="ml-2"><Badge>Not in use</Badge></span>}
+                </span>
+                <ActionForm action={setPackActive.bind(null, item.id, p.id, !p.active)} label={`${p.active ? "Stop using" : "Use again"} ${p.name}`} resetOnSuccess={false}>
+                  <SubmitButton variant="secondary" size="sm">
+                    {p.active ? "Stop using" : "Use again"}
+                  </SubmitButton>
+                </ActionForm>
+              </li>
+            ))}
+          </ul>
+        )}
+        {item.active ? (
+          <ActionForm
+            action={addPack.bind(null, item.id, item.unit)}
+            label="Add a pack"
+            className="grid gap-3 sm:grid-cols-[2fr_1fr_auto] sm:items-end"
+          >
+            <Field label="Pack">
+              <Input name="name" placeholder="Sack" required maxLength={40} />
+            </Field>
+            <Field label={`Holds (${item.unit === "pc" ? "pieces" : item.unit})`} hint="like 25, or 500 g">
+              <Input name="size" required inputMode="decimal" />
+            </Field>
+            <SubmitButton>Add pack</SubmitButton>
+          </ActionForm>
+        ) : (
+          <p className="text-sm text-ink-faint">Switch the item on to add packs.</p>
+        )}
+      </Card>
+
       <h2 className="mb-3 text-sm font-semibold">History</h2>
       {moves.length === 0 ? (
         <EmptyState title="Nothing has moved yet">Receive a delivery to start.</EmptyState>
@@ -84,9 +125,9 @@ export default async function StockItemPage({ params }: PageProps<"/stock/[id]">
                 </td>
                 <td className={td}>
                   <Badge tone={m.kind === "purchase" ? "good" : m.kind === "sale" ? "info" : "warn"}>{stockKindLabel[m.kind] ?? m.kind}</Badge>
-                  {(m.note || m.invoice_no) && (
+                  {(m.note || m.invoice_no || m.pack) && (
                     <div className="mt-0.5 text-xs text-ink-soft">
-                      {[m.note, m.invoice_no].filter(Boolean).join(" · ")}
+                      {[m.note, m.invoice_no, m.pack && `${m.packs} × ${m.pack}`].filter(Boolean).join(" · ")}
                     </div>
                   )}
                 </td>

@@ -53,6 +53,7 @@ type Discount struct {
 // Modifier is an add-on priced on top of its line's unit price, taxed at the
 // line's rate ("extra cheese +₹40").
 type Modifier struct {
+	Ref        string `json:"ref,omitempty"` // the add-on option's id; echoed, never priced (stock uses it for add-on recipes)
 	Name       string `json:"name"`
 	PricePaise int64  `json:"price_paise"`
 }

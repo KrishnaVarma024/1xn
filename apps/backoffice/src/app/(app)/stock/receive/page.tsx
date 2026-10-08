@@ -7,7 +7,8 @@ import { longDate } from "@/lib/dates";
 import { newDocId } from "@/lib/ids";
 import { paidByLabel, stockKindLabel, tradingDayIST } from "@/lib/labels";
 import { formatPaise } from "@/lib/money";
-import type { StockDoc, StockList } from "@/lib/types";
+import { formatQty } from "@/lib/quantity";
+import type { StockDoc, StockList, SupplierList } from "@/lib/types";
 import { recordPurchase } from "../actions";
 import { StockTabs } from "../tabs";
 
@@ -17,9 +18,10 @@ const ROWS = 8;
 
 export default async function ReceivePage() {
   const { outlet } = await getContext();
-  const [{ items }, { documents }] = await Promise.all([
+  const [{ items }, { documents }, { suppliers }] = await Promise.all([
     api<StockList>(`/v1/outlets/${outlet.id}/stock`),
     api<{ documents: StockDoc[] }>(`/v1/outlets/${outlet.id}/stock/purchases`),
+    api<SupplierList>(`/v1/outlets/${outlet.id}/stock/suppliers`),
   ]);
   const usable = items.filter((i) => i.active);
   const today = tradingDayIST();
@@ -36,7 +38,12 @@ export default async function ReceivePage() {
           <ActionForm action={recordPurchase.bind(null, newDocId())} label="Receive goods">
             <div className="grid gap-3 sm:grid-cols-4">
               <Field label="Supplier">
-                <Input name="supplier" placeholder="Bandra Meat & Dairy" required maxLength={100} />
+                <Input name="supplier" list="supplier-names" placeholder="Bandra Meat & Dairy" required maxLength={100} autoComplete="off" />
+                <datalist id="supplier-names">
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.name} />
+                  ))}
+                </datalist>
               </Field>
               <Field label="Their invoice no." hint="optional">
                 <Input name="invoice_no" maxLength={40} />
@@ -56,26 +63,37 @@ export default async function ReceivePage() {
             <div className="mt-4 space-y-2">
               <div className="hidden grid-cols-[2fr_1fr_1fr] gap-2 text-xs font-medium text-ink-soft sm:grid">
                 <span>Item</span>
-                <span>Quantity (like 5, or 500 g)</span>
+                <span>Quantity (like 5, or 500 g; for a pack, how many)</span>
                 <span>Cost for the line, ₹ (with taxes)</span>
               </div>
               {Array.from({ length: ROWS }, (_, i) => (
                 <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr_1fr]">
                   <Select name={`item${i}`} defaultValue="" aria-label={`Row ${i + 1} item`}>
                     <option value="">—</option>
-                    {usable.map((it) => (
+                    {usable.map((it) => [
                       <option key={it.id} value={it.id}>
                         {it.name} ({it.unit === "pc" ? "pieces" : it.unit})
-                      </option>
-                    ))}
+                      </option>,
+                      // A pack is "<item id>|<pack id>": the quantity is then how many packs.
+                      ...it.packs
+                        .filter((p) => p.active)
+                        .map((p) => (
+                          <option key={p.id} value={`${it.id}|${p.id}`}>
+                            {it.name}: {p.name} of {formatQty(p.qty, it.unit)}
+                          </option>
+                        )),
+                    ])}
                   </Select>
                   <Input name={`qty${i}`} aria-label={`Row ${i + 1} quantity`} inputMode="decimal" />
                   <Input name={`cost${i}`} aria-label={`Row ${i + 1} cost`} inputMode="decimal" />
                 </div>
               ))}
             </div>
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               <SubmitButton pendingText="Booking…">Book the delivery</SubmitButton>
+              <span className="text-xs text-ink-faint">
+                Bought by the sack or tin? Add the pack on the item&apos;s page and it shows up in the list.
+              </span>
             </div>
           </ActionForm>
         </Card>

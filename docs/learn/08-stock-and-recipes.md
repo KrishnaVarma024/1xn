@@ -26,6 +26,23 @@ Recipes are **effective-dated**. Saving a recipe ends the current lines (`valid_
 
 This is **perpetual** inventory: the books know the stock at every moment, not only after a count. The other kind, **periodic**, counts at month end and works out cost as opening + purchases − closing. Perpetual needs recipes; it pays back with a food cost you can read every morning.
 
+## Add-ons use stock too
+
+"Extra cheese" on a pizza uses 30 g of cheese. An add-on option (a modifier, note 05) can have a recipe of its own, stored and versioned exactly like a dish's (`addon_recipe_line`, `PUT /v1/stock/addon-recipes/{option}`). For a bill to find it, each modifier on a bill line carries `ref`, the option's id, the same way the line's `ref` is the dish's id. `ConsumeForBill` then adds the add-on's recipe once per portion of the line: two pizzas with extra cheese use 60 g.
+
+Two small design points:
+
+- **One function for both kinds of recipe.** `putRecipe` takes a `recipeKind{table, key, owner}`, so dishes and add-ons share the save, the versioning, the locks and the checks. A second copy would drift.
+- **What the till sends is checked against the menu, not trusted.** A `ref` that is not one of this tenant's options (a typo, another tenant's id, a dish id) simply finds no recipe and uses nothing, and RLS makes another tenant's recipes invisible anyway. The bill is never refused for it: the guest has eaten.
+
+The recipe card shows each add-on's cost against its price without GST, taken apart only when every dish offering it has one GST rate (an add-on is taxed with the dish it sits on).
+
+## Packs: how it is bought
+
+Rice comes in a 25 kg bag, oil in a 15 l tin. A **pack** (`stock_pack`) says how much of the item one holds. Receiving "2 bags" stores 50 kg: stock is always kept in the item's own unit, a pack only converts on the way in, and the move remembers `pack_id` and `packs` for the history ("2 × Bag").
+
+A pack **never changes size**. A new size is a new pack and the old one is switched off. If "Bag" could be edited from 25 kg to 10 kg, every old delivery that says "2 × Bag" would quietly change meaning. The same idea as effective-dated recipes: never rewrite what history refers to.
+
 ## Weighted average cost, with no rounding dust
 
 Each outlet's balance of an item holds a quantity and a value. A purchase adds both. Stock that leaves takes **its share of the value**: `value × q / qty`. When the last gram leaves, the share is the whole value, so a balance at zero is always worth exactly zero. Rounding errors cannot pile up. `TestValueAlwaysReconciles` runs 5,000 random histories and checks after every step that value in − value out = the balance.
@@ -34,7 +51,7 @@ Each outlet's balance of an item holds a quantity and a value. A purchase adds b
 
 Kitchens use stock before anyone records the delivery. 1x.n never refuses a bill for that (the guest ate). The stock goes negative, the missing quantity leaves at the **last purchase price** as an estimate, and a `negative_stock` alert asks someone to book the delivery. When the delivery is booked, the estimate is **trued up**: those units now have a real price. If 500 g of flour left at Rs 40/kg (Rs 20) and arrives at Rs 50/kg, the true-up adds Rs 5 to food cost, and the rest of the delivery is worth exactly its own price. `Balance.In` returns the true-up; the purchase's journal entry books it.
 
-## Paying a supplier
+## How a delivery is paid
 
 A delivery is paid one of four ways, and each credits a different account:
 
@@ -46,6 +63,17 @@ A delivery is paid one of four ways, and each credits a different account:
 | Cash from a till drawer | 1150 Supplier payments from tills | the cashier also records a `supplier` cash move on the till |
 
 The till drawer is the tricky one. Its cash is counted against what it should hold (note 07), so if the vegetable vendor is paid Rs 500 from the drawer, the drawer must know, or the shift closes Rs 500 short and the money is booked twice: once by the purchase and once as a shortage. So both sides record their part. The till's payout lowers the drawer's expected cash and books Dr 1150 / Cr 1100 Cash in hand. The owner's delivery books Dr 1300 Stock / Cr 1150. **Account 1150 is a clearing account:** when both sides were recorded, it is back to zero. When it is not zero, one side is missing, and the balance says which.
+
+## Suppliers and what is owed: a subledger
+
+Deliveries used to name their supplier in free text. Migration 0011 turns each distinct name (ignoring case) into a `supplier` row, and every purchase now points at one; a delivery naming a new supplier creates it (`resolveSupplier`, with `INSERT ... ON CONFLICT DO NOTHING`, so two deliveries naming the same new supplier at once both find one row).
+
+What a supplier is owed is **worked out from the documents**: deliveries on credit, less payments, for one legal entity (whose books hold the payable). There is no "balance" column to keep in step. This is a **subledger**: a detailed list (per supplier) whose total must equal one account in the general ledger (2100 Payable to suppliers), the same way stock balances must add up to 1300. Accountants call checking it a **reconciliation**; `TestSuppliersAndPayables` does it after every step.
+
+Paying a supplier (`POST /v1/outlets/{id}/stock/supplier-payments`) books Dr 2100 / Cr the safe (1105), the bank (1140) or a till (1150, matched by the till's own `supplier` payout, as above). It follows the owner-document rules of the next section (UUIDv7 idempotency key, request fingerprint, locked months refused) and two more:
+
+- **Never more than is owed.** The supplier row is locked `FOR UPDATE`, so two payments to one supplier take turns and the second sees the first. Advances are not supported yet.
+- **Never more than was owed on its own date, or any day since.** A payment is booked on the date the owner picks. Dated before the delivery it pays, it would be an advance hidden in the past: last month's books would show the payable below zero. So the limit is the *lowest* running balance from that date to today (`owedFrom`, a running sum with a window function). The review found this one.
 
 ## Documents, and doing them once
 
@@ -93,6 +121,13 @@ A second agent attacked the slice and proved 14 bugs, each with a failing test (
 - **"1,50" kg was read as 150 kg.** The quantity and rupee parsers accepted any comma as a thousands separator, so a decimal comma (common on phone keyboards) was read a hundred times too big, silently. Numbers are now read only with real groupings (1,500 or 1,20,000: the last group always has three digits), and anything else is refused, never guessed.
 - **A delivery paid from the till was booked twice**: once by the purchase, once as the drawer's shortage. The fix was the clearing account above.
 
+The slice 7 review (suppliers, packs, add-ons) proved five more (`stock_more_review_test.go`, `e2e/suppliers-review.spec.ts`):
+
+- **A payment dated before the delivery it paid** was accepted, because the check compared it with what is owed today. Fixed with the "owed on its own date, or any day since" rule above.
+- **A recipe save and a switch-off of its ingredient, at the same moment, both succeeded**: each checked something the other was changing, and neither locked it. This is **write skew**, the anomaly that row locks on the rows you *write* do not prevent; you have to lock the rows you *read*. The save now takes the items `FOR SHARE` and the switch-off takes its item first, so one waits and then sees the other.
+- **A supplier with a city landline could not be edited**: the page showed "+91 22 2345 6789" as "22234 56789", and saving read that back as a bad mobile number. A value a form shows must always read back as itself.
+- A supplier GSTIN with a state code that does not exist was accepted, and the API's payment limit (₹1,000 crore) disagreed with the table's (₹100 crore), so a large payment died on the database's CHECK with a vague message. Limits belong in one place, or at least must agree.
+
 ## Proof in tests
 
 | Test | Proves |
@@ -105,12 +140,17 @@ A second agent attacked the slice and proved 14 bugs, each with a failing test (
 | `TestTillPaysASupplier` | a delivery paid from a drawer: shift exact, 1150 back to zero |
 | `TestStockFiguresTooLargeAreRefused` | 64-bit overflow refused, nothing kept |
 | `TestReviewS1` to `S14` | the review's findings stay fixed |
-| `e2e/stock.spec.ts` | the owner's whole flow in the browser |
+| `TestAddonRecipes` | add-on recipes used per portion, versioned by issue time, resent bills once, books equal stock |
+| `TestPurchasePacks` | packs convert on the way in, are refused when switched off, of another item or too large |
+| `TestSuppliersAndPayables` | suppliers from deliveries, payments by safe, bank and till, never more than owed, replays, locked months; owed equals 2100 throughout |
+| `TestSupplierPaymentsFollowTheirDates` | a backdated payment pays at most what was owed on its date and every day since |
+| `TestReviewP1` to `P5` | the slice 7 review's findings stay fixed |
+| `e2e/stock.spec.ts`, `e2e/suppliers.spec.ts` | the owner's whole flow in the browser, packs, suppliers and add-ons included |
 
 ## What would break at 10x?
 
-- **One recipe per dish, no modifiers.** "Extra cheese" uses cheese too. Modifier options need recipes of their own.
-- **No units of purchase.** Suppliers sell flour by the 25 kg sack; today the owner types 25. A "pack of" conversion per supplier item is next.
+- **What is owed is summed from every document each time.** Fine for hundreds of deliveries a supplier; at tens of thousands, keep a running balance per supplier, updated in the same transaction, and keep the sum as a nightly check.
+- **No supplier invoices matched to deliveries.** A payment pays "the supplier", not invoice INV-101. Paying specific invoices (and part-payments of them) needs an allocation table.
 - **No input tax credit.** A restaurant at 5% GST cannot claim it, so the cost includes tax. A restaurant at 18% (in a hotel) can; then the tax on purchases must go to an input GST account.
 - **Reports use today's recipes and prices.** The recipe card and the per-dish cost in the food cost report use the current recipe at today's average cost; the food cost itself is what bills really used.
 
@@ -132,8 +172,16 @@ The server serialises on the key (an advisory lock or a unique index) and answer
 Always lock them in one global order, here by id.
 Two transactions can then only wait in one direction, so no cycle of waits can form.</details>
 
+<details><summary>5. What is a subledger, and how do you know it is right?</summary>
+A detailed record (per supplier, per customer, per stock item) whose total belongs to one account of the general ledger.
+You reconcile: the sum of the details must equal the account's balance, at any moment you check. Here, what every supplier is owed must equal 2100 Payable to suppliers.</details>
+
+<details><summary>6. What is write skew, and how do you stop it?</summary>
+Two transactions each read something, decide from it, and write something else; neither's write conflicts with the other's, so both commit, and together they break a rule each one checked.
+Lock what you read (SELECT ... FOR SHARE / FOR UPDATE, or a common row both must lock), or use SERIALIZABLE isolation and retry.</details>
+
 ## Exercises
 
-1. Add a recipe for the "Extra cheese" modifier. Where does `ConsumeForBill` need to look, and what must a bill line carry for it to work?
+1. Add advance payments to suppliers: what would a payment above what is owed be booked to, and how would the next delivery use it up?
 2. Change `Out` to use a rounded unit cost (`UnitCost() × q / 1000`). Which test fails first, and why?
 3. Write the SQL for "the 5 ingredients with the most wastage this month, by value".

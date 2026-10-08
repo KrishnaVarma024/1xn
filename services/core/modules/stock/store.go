@@ -38,6 +38,8 @@ type move struct {
 	qty   int64
 	value int64
 	after int64
+	pack  *uuid.UUID // a purchase received in packs: which,
+	packs int64      // and how many
 }
 
 // book is one stock document being written: the balances it touches,
@@ -152,8 +154,16 @@ func (b *book) out(item uuid.UUID, kind string, qty int64) int64 {
 
 // in books a purchase line and returns its true-up.
 func (b *book) in(item uuid.UUID, qty, cost int64) int64 {
+	return b.inPacks(item, qty, cost, nil, 0)
+}
+
+// inPacks books a purchase line received in packs (pack nil: loose).
+func (b *book) inPacks(item uuid.UUID, qty, cost int64, pack *uuid.UUID, packs int64) int64 {
 	up := b.bal[item].In(qty, cost)
 	b.record(item, "purchase", qty, cost)
+	if pack != nil {
+		b.moves[len(b.moves)-1].pack, b.moves[len(b.moves)-1].packs = pack, packs
+	}
 	if up != 0 {
 		b.moves = append(b.moves, move{item: item, kind: "trueup", value: -up, after: b.bal[item].Qty})
 	}
@@ -170,6 +180,7 @@ func (b *book) found(item uuid.UUID, qty int64) int64 {
 // header is the stock_doc row.
 type header struct {
 	Kind, Supplier, InvoiceNo, PaidBy, Note string
+	SupplierID                              *uuid.UUID
 	BillID                                  *uuid.UUID
 	Total                                   int64
 	CreatedBy                               *uuid.UUID
@@ -198,17 +209,19 @@ func (b *book) finish(h header, entry *ledger.Entry) error {
 	}
 	if _, err := b.tx.ExecContext(b.ctx, `
 		INSERT INTO stock_doc (id, tenant_id, outlet_id, kind, bill_id, business_date, at, supplier, invoice_no, paid_by,
-		                       total, note, ledger_status, journal_entry_id, created_by, request_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), nullif($9, ''), nullif($10, ''), $11, nullif($12, ''), $13, $14, $15, $16)`,
+		                       total, note, ledger_status, journal_entry_id, created_by, request_hash, supplier_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), nullif($9, ''), nullif($10, ''), $11, nullif($12, ''), $13, $14, $15, $16, $17)`,
 		b.docID, b.tenant, b.outlet, h.Kind, h.BillID, b.businessDate.Format(time.DateOnly), b.at, h.Supplier, h.InvoiceNo,
-		h.PaidBy, h.Total, h.Note, status, entryID, h.CreatedBy, h.RequestHash); err != nil {
+		h.PaidBy, h.Total, h.Note, status, entryID, h.CreatedBy, h.RequestHash, h.SupplierID); err != nil {
 		return err
 	}
 	for _, m := range b.moves {
 		if _, err := b.tx.ExecContext(b.ctx, `
-			INSERT INTO stock_move (tenant_id, doc_id, outlet_id, stock_item_id, kind, qty, value, qty_after, business_date, at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			b.tenant, b.docID, b.outlet, m.item, m.kind, m.qty, m.value, m.after, b.businessDate.Format(time.DateOnly), b.at); err != nil {
+			INSERT INTO stock_move (tenant_id, doc_id, outlet_id, stock_item_id, kind, qty, value, qty_after, business_date, at,
+			                        pack_id, packs)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, 0))`,
+			b.tenant, b.docID, b.outlet, m.item, m.kind, m.qty, m.value, m.after, b.businessDate.Format(time.DateOnly), b.at,
+			m.pack, m.packs); err != nil {
 			return err
 		}
 	}
@@ -256,8 +269,9 @@ func (b *book) alert(id uuid.UUID) error {
 
 // Sold is one bill line: the menu item (the line's ref) and how many.
 type Sold struct {
-	ItemRef string
-	Qty     int64
+	ItemRef   string
+	Qty       int64
+	AddonRefs []string // the line's add-on options: each is used once per portion of the line
 }
 
 // ConsumeForBill uses up the ingredients of a bill's dishes at its outlet,
@@ -273,49 +287,66 @@ type Sold struct {
 // from a real kitchen) leave stock untouched and raise an alert.
 func ConsumeForBill(ctx context.Context, tx *sql.Tx, tenant, outlet, billID uuid.UUID, businessDate, issuedAt time.Time,
 	sold []Sold) error {
+	// Portions of each dish and of each add-on option. A refs that is not an
+	// id (an open item typed at the till) uses nothing.
 	portions := map[uuid.UUID]int64{}
-	var dishes []string
+	addons := map[uuid.UUID]int64{}
+	tooLarge := false
+	add := func(m map[uuid.UUID]int64, ref string, qty int64) {
+		id, err := uuid.Parse(ref)
+		if err != nil || qty <= 0 {
+			return
+		}
+		if m[id] > math.MaxInt64-qty {
+			tooLarge = true
+		}
+		m[id] += qty
+	}
 	for _, s := range sold {
-		id, err := uuid.Parse(s.ItemRef)
-		if err != nil || s.Qty <= 0 {
-			continue
+		add(portions, s.ItemRef, s.Qty)
+		for _, a := range s.AddonRefs {
+			add(addons, a, s.Qty)
 		}
-		if portions[id] == 0 {
-			dishes = append(dishes, id.String())
-		}
-		portions[id] += s.Qty
-	}
-	if len(dishes) == 0 {
-		return nil
-	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT menu_item_id, stock_item_id, qty FROM recipe_line
-		WHERE menu_item_id = ANY($1::uuid[]) AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2)`,
-		pq.Array(dishes), issuedAt)
-	if err != nil {
-		return err
 	}
 	need := map[uuid.UUID]int64{}
 	var items []uuid.UUID
-	tooLarge := false
-	for rows.Next() {
-		var dish, item uuid.UUID
-		var qty int64
-		if err := rows.Scan(&dish, &item, &qty); err != nil {
-			rows.Close()
+	use := func(k recipeKind, owners map[uuid.UUID]int64) error {
+		if len(owners) == 0 {
+			return nil
+		}
+		keys := make([]string, 0, len(owners))
+		for id := range owners {
+			keys = append(keys, id.String())
+		}
+		rows, err := tx.QueryContext(ctx, `
+			SELECT `+k.key+`, stock_item_id, qty FROM `+k.table+`
+			WHERE `+k.key+` = ANY($1::uuid[]) AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2)`,
+			pq.Array(keys), issuedAt)
+		if err != nil {
 			return err
 		}
-		if need[item] == 0 {
-			items = append(items, item)
+		defer rows.Close()
+		for rows.Next() {
+			var owner, item uuid.UUID
+			var qty int64
+			if err := rows.Scan(&owner, &item, &qty); err != nil {
+				return err
+			}
+			if need[item] == 0 {
+				items = append(items, item)
+			}
+			n, ok := mulDivOK(qty, owners[owner], 1)
+			if !ok || need[item] > math.MaxInt64-n {
+				tooLarge = true
+			}
+			need[item] += n
 		}
-		n, ok := mulDivOK(qty, portions[dish], 1)
-		if !ok || need[item] > math.MaxInt64-n {
-			tooLarge = true
-		}
-		need[item] += n
+		return rows.Err()
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	if err := use(dishRecipes, portions); err != nil {
+		return err
+	}
+	if err := use(addonRecipes, addons); err != nil {
 		return err
 	}
 	if len(items) == 0 {

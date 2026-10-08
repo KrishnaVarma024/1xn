@@ -29,9 +29,10 @@ import (
 
 // Limits on what an owner can send. Far beyond any real kitchen.
 const (
-	maxQty   = 1_000_000_000_000 // milli-units: a million tonnes
-	maxCost  = 1_000_000_000_000 // paise: Rs 1,000 crore
-	maxLines = 200
+	maxQty     = 1_000_000_000_000 // milli-units: a million tonnes
+	maxCost    = 1_000_000_000_000 // paise: Rs 1,000 crore
+	maxPayment = 100_000_000_000   // paise: Rs 100 crore, as supplier_payment.amount allows
+	maxLines   = 200
 )
 
 var units = map[string]bool{"kg": true, "l": true, "pc": true}
@@ -122,6 +123,7 @@ type Item struct {
 	UnitCost     int64     `json:"unit_cost"` // paise per kg, litre or piece
 	LastCost     int64     `json:"last_cost"`
 	Status       string    `json:"status"` // ok, low, out (none left), negative, new (never stocked)
+	Packs        []Pack    `json:"packs"`  // how it is bought: active packs first
 }
 
 func status(i Item, stocked bool) string {
@@ -148,14 +150,24 @@ type itemInput struct {
 // OwnerRoutes is mounted at /v1/stock (owner): the tenant's stock items and
 // recipes, shared by its outlets.
 //
-//	POST  /items              {name, unit: kg|l|pc, reorder_level}
-//	PATCH /items/{id}         {name?, reorder_level?, active?}
-//	PUT   /recipes/{menuItem} {lines: [{stock_item_id, qty}]}; no lines removes the recipe
+//	POST  /items                    {name, unit: kg|l|pc, reorder_level}
+//	PATCH /items/{id}               {name?, reorder_level?, active?}
+//	POST  /items/{id}/packs         {name, qty}: how a supplier sells it ("Sack", 25000 g)
+//	PATCH /packs/{id}               {active: false}
+//	PUT   /recipes/{menuItem}       {lines: [{stock_item_id, qty}]}; no lines removes the recipe
+//	PUT   /addon-recipes/{option}   the same, for an add-on option ("Extra cheese")
+//	POST  /suppliers                {name, phone?, gstin?}
+//	PATCH /suppliers/{id}           {name?, phone?, gstin?}
 func OwnerRoutes(d *sql.DB) http.Handler {
 	r := chi.NewRouter()
 	r.Post("/items", createItem(d))
 	r.Patch("/items/{itemID}", updateItem(d))
-	r.Put("/recipes/{menuItemID}", putRecipe(d))
+	r.Post("/items/{itemID}/packs", createPack(d))
+	r.Patch("/packs/{packID}", updatePack(d))
+	r.Put("/recipes/{menuItemID}", putRecipe(d, dishRecipes))
+	r.Put("/addon-recipes/{menuItemID}", putRecipe(d, addonRecipes))
+	r.Post("/suppliers", createSupplier(d))
+	r.Patch("/suppliers/{supplierID}", updateSupplier(d))
 	return r
 }
 
@@ -239,14 +251,33 @@ func updateItem(d *sql.DB) http.HandlerFunc {
 		err = db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
 			if in.Active != nil && !*in.Active {
 				// Bills would keep using it, while Receive and Count hide it.
-				var dishes int
-				if err := tx.QueryRowContext(r.Context(), `
-					SELECT count(DISTINCT menu_item_id) FROM recipe_line WHERE stock_item_id = $1 AND valid_to IS NULL`, id).Scan(&dishes); err != nil {
+				// Lock the item first: a recipe being saved with it holds it
+				// FOR SHARE, so one of the two waits and then sees the other.
+				var locked uuid.UUID
+				err := tx.QueryRowContext(r.Context(), `SELECT id FROM stock_item WHERE id = $1 FOR NO KEY UPDATE`, id).Scan(&locked)
+				if errors.Is(err, sql.ErrNoRows) {
+					return httpx.ErrNotFound
+				}
+				if err != nil {
 					return err
 				}
-				if dishes > 0 {
+				var dishes, addons int
+				if err := tx.QueryRowContext(r.Context(), `
+					SELECT (SELECT count(DISTINCT menu_item_id) FROM recipe_line WHERE stock_item_id = $1 AND valid_to IS NULL),
+					       (SELECT count(DISTINCT modifier_option_id) FROM addon_recipe_line WHERE stock_item_id = $1 AND valid_to IS NULL)`,
+					id).Scan(&dishes, &addons); err != nil {
+					return err
+				}
+				if dishes+addons > 0 {
+					what := fmt.Sprintf("%d %s", dishes, plural(dishes, "dish", "dishes"))
+					switch {
+					case dishes == 0:
+						what = fmt.Sprintf("%d %s", addons, plural(addons, "add-on", "add-ons"))
+					case addons > 0:
+						what += fmt.Sprintf(" and %d %s", addons, plural(addons, "add-on", "add-ons"))
+					}
 					return httpx.E(http.StatusConflict, "in_recipes",
-						fmt.Sprintf("%d %s still use this item; take it out of their recipes first", dishes, plural(dishes, "dish", "dishes")))
+						fmt.Sprintf("%s still use this item; take it out of their recipes first", what))
 				}
 			}
 			res, err := tx.ExecContext(r.Context(), `
@@ -279,7 +310,18 @@ type recipeLineInput struct {
 	Qty         int64     `json:"qty"` // milli-units per portion
 }
 
-func putRecipe(d *sql.DB) http.HandlerFunc {
+// recipeKind is what a recipe belongs to: a dish, or an add-on option. Both
+// are versioned the same way; only the tables differ.
+type recipeKind struct {
+	table, key, owner string // recipe table, its owner column, the owner's table
+}
+
+var (
+	dishRecipes  = recipeKind{table: "recipe_line", key: "menu_item_id", owner: "menu_item"}
+	addonRecipes = recipeKind{table: "addon_recipe_line", key: "modifier_option_id", owner: "modifier_option"}
+)
+
+func putRecipe(d *sql.DB, k recipeKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dish, err := pathID(r, "menuItemID")
 		if err != nil {
@@ -314,7 +356,7 @@ func putRecipe(d *sql.DB) http.HandlerFunc {
 			// Lock the dish: two saves of one recipe at once take turns, and
 			// the second sees the first's lines.
 			var found uuid.UUID
-			err := tx.QueryRowContext(r.Context(), `SELECT id FROM menu_item WHERE id = $1 FOR UPDATE`, dish).Scan(&found)
+			err := tx.QueryRowContext(r.Context(), `SELECT id FROM `+k.owner+` WHERE id = $1 FOR UPDATE`, dish).Scan(&found)
 			if errors.Is(err, sql.ErrNoRows) {
 				return httpx.ErrNotFound
 			}
@@ -326,9 +368,21 @@ func putRecipe(d *sql.DB) http.HandlerFunc {
 				for i, l := range in.Lines {
 					items[i] = l.StockItemID.String()
 				}
-				var n int
-				if err := tx.QueryRowContext(r.Context(), `
-					SELECT count(*) FROM stock_item WHERE id = ANY($1::uuid[]) AND active`, pq.Array(items)).Scan(&n); err != nil {
+				// FOR SHARE: an item cannot be switched off while this recipe
+				// is being saved with it (updateItem locks the item before it
+				// looks for recipes that use it), or the recipe would end up
+				// using an item that Receive and Count no longer show.
+				rows, err := tx.QueryContext(r.Context(), `
+					SELECT id FROM stock_item WHERE id = ANY($1::uuid[]) AND active ORDER BY id FOR SHARE`, pq.Array(items))
+				if err != nil {
+					return err
+				}
+				n := 0
+				for rows.Next() {
+					n++
+				}
+				rows.Close()
+				if err := rows.Err(); err != nil {
 					return err
 				}
 				if n != len(items) {
@@ -343,7 +397,7 @@ func putRecipe(d *sql.DB) http.HandlerFunc {
 			var now time.Time
 			var first bool
 			if err := tx.QueryRowContext(r.Context(), `
-				SELECT clock_timestamp(), NOT EXISTS (SELECT 1 FROM recipe_line WHERE menu_item_id = $1)`, dish).Scan(&now, &first); err != nil {
+				SELECT clock_timestamp(), NOT EXISTS (SELECT 1 FROM `+k.table+` WHERE `+k.key+` = $1)`, dish).Scan(&now, &first); err != nil {
 				return err
 			}
 			from := now
@@ -351,12 +405,12 @@ func putRecipe(d *sql.DB) http.HandlerFunc {
 				from = recipesBegin
 			}
 			if _, err := tx.ExecContext(r.Context(), `
-				UPDATE recipe_line SET valid_to = $2 WHERE menu_item_id = $1 AND valid_to IS NULL`, dish, now); err != nil {
+				UPDATE `+k.table+` SET valid_to = $2 WHERE `+k.key+` = $1 AND valid_to IS NULL`, dish, now); err != nil {
 				return err
 			}
 			for _, l := range in.Lines {
 				if _, err := tx.ExecContext(r.Context(), `
-					INSERT INTO recipe_line (tenant_id, menu_item_id, stock_item_id, qty, valid_from)
+					INSERT INTO `+k.table+` (tenant_id, `+k.key+`, stock_item_id, qty, valid_from)
 					VALUES ($1, $2, $3, $4, $5)`, p.TenantID, dish, l.StockItemID, l.Qty, from); err != nil {
 					return err
 				}
@@ -384,12 +438,16 @@ func plural(n int, one, many string) string {
 //
 //	GET  /                 every stock item with what this outlet holds
 //	GET  /items/{id}       one item and its latest moves
-//	POST /purchases        goods received: {id, supplier, invoice_no, date, paid_by, lines: [{stock_item_id, qty, cost}]}
+//	POST /purchases        goods received: {id, supplier | supplier_id, invoice_no, date, paid_by,
+//	                       lines: [{stock_item_id, qty | pack_id + packs, cost}]}
 //	GET  /purchases        the latest purchases
 //	POST /wastage          {id, stock_item_id, qty, reason, date}
 //	POST /counts           a physical count: {id, lines: [{stock_item_id, counted}], note, date}
 //	GET  /recipes          every dish with its recipe and what a portion costs here
 //	GET  /food-cost        ?from=&to= sales, food cost, wastage, count differences
+//	GET  /suppliers        suppliers with what this outlet's books owe each
+//	GET  /suppliers/{id}   a supplier's statement: deliveries and payments, with the running balance
+//	POST /supplier-payments {id, supplier_id, amount, paid_by: safe|bank|till, date, reference}
 //
 // Documents carry an id the back office made before submitting (a UUIDv7):
 // sending the same one again returns the first result and books nothing.
@@ -403,6 +461,9 @@ func OutletRoutes(d *sql.DB) http.Handler {
 	r.Post("/counts", postCount(d))
 	r.Get("/recipes", recipes(d))
 	r.Get("/food-cost", foodCost(d))
+	r.Get("/suppliers", listSuppliers(d))
+	r.Get("/suppliers/{supplierID}", supplierStatement(d))
+	r.Post("/supplier-payments", postSupplierPayment(d))
 	return r
 }
 
@@ -468,9 +529,23 @@ func loadItems(ctx context.Context, tx *sql.Tx, outlet uuid.UUID, only *uuid.UUI
 		}
 		i.Qty, i.Value, i.LastCost, i.UnitCost = b.Qty, b.Value, b.LastCost, b.UnitCost()
 		i.Status = status(i, stocked)
+		i.Packs = []Pack{}
 		items = append(items, i)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	packs, err := allPacks(ctx, tx, only != nil)
+	if err != nil {
+		return nil, err
+	}
+	for k := range items {
+		if ps := packs[items[k].ID]; ps != nil {
+			items[k].Packs = ps
+		}
+	}
+	return items, nil
 }
 
 // Move is one line of an item's history.
@@ -484,6 +559,8 @@ type Move struct {
 	At           time.Time `json:"at"`
 	Note         string    `json:"note,omitempty"`       // the supplier, the wastage reason, the count note
 	InvoiceNo    string    `json:"invoice_no,omitempty"` // the bill (for sales) or the supplier's invoice
+	Pack         string    `json:"pack,omitempty"`       // received in packs: the pack's name
+	Packs        int64     `json:"packs,omitempty"`      // and how many
 }
 
 func itemHistory(d *sql.DB) http.HandlerFunc {
@@ -503,10 +580,12 @@ func itemHistory(d *sql.DB) http.HandlerFunc {
 			}
 			rows, err := tx.QueryContext(r.Context(), `
 				SELECT m.doc_id, m.kind, m.qty, m.value, m.qty_after, m.business_date, m.at,
-				       coalesce(d.supplier, d.note, ''), coalesce(b.invoice_no, d.invoice_no, '')
+				       coalesce(d.supplier, d.note, ''), coalesce(b.invoice_no, d.invoice_no, ''),
+				       coalesce(pk.name, ''), coalesce(m.packs, 0)
 				FROM stock_move m
 				JOIN stock_doc d ON d.id = m.doc_id AND d.tenant_id = m.tenant_id
 				LEFT JOIN bill b ON b.id = d.bill_id AND b.tenant_id = d.tenant_id
+				LEFT JOIN stock_pack pk ON pk.id = m.pack_id AND pk.tenant_id = m.tenant_id
 				WHERE m.outlet_id = $1 AND m.stock_item_id = $2
 				ORDER BY m.n DESC LIMIT 200`, outlet, id)
 			if err != nil {
@@ -517,7 +596,8 @@ func itemHistory(d *sql.DB) http.HandlerFunc {
 			for rows.Next() {
 				var m Move
 				var day time.Time
-				if err := rows.Scan(&m.DocID, &m.Kind, &m.Qty, &m.Value, &m.QtyAfter, &day, &m.At, &m.Note, &m.InvoiceNo); err != nil {
+				if err := rows.Scan(&m.DocID, &m.Kind, &m.Qty, &m.Value, &m.QtyAfter, &day, &m.At, &m.Note, &m.InvoiceNo,
+					&m.Pack, &m.Packs); err != nil {
 					return nil, err
 				}
 				m.BusinessDate = day.Format(time.DateOnly)
@@ -673,26 +753,35 @@ func entryDate(d time.Time) time.Time {
 }
 
 type purchaseLine struct {
-	StockItemID uuid.UUID `json:"stock_item_id"`
-	Qty         int64     `json:"qty"`  // milli-units received
-	Cost        int64     `json:"cost"` // paise for the whole line, taxes included (no input credit for restaurants at 5%)
+	StockItemID uuid.UUID  `json:"stock_item_id"`
+	Qty         int64      `json:"qty,omitempty"`     // milli-units received; or, received in packs:
+	PackID      *uuid.UUID `json:"pack_id,omitempty"` // the pack
+	Packs       int64      `json:"packs,omitempty"`   // and how many (the quantity is packs x the pack's size)
+	Cost        int64      `json:"cost"`              // paise for the whole line, taxes included (no input credit for restaurants at 5%)
 }
 
 func postPurchase(d *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			ID        uuid.UUID      `json:"id"`
-			Supplier  string         `json:"supplier"`
-			InvoiceNo string         `json:"invoice_no"`
-			Date      string         `json:"date"`
-			PaidBy    string         `json:"paid_by"`
-			Lines     []purchaseLine `json:"lines"`
+			ID         uuid.UUID      `json:"id"`
+			Supplier   string         `json:"supplier,omitempty"`
+			SupplierID *uuid.UUID     `json:"supplier_id,omitempty"`
+			InvoiceNo  string         `json:"invoice_no"`
+			Date       string         `json:"date"`
+			PaidBy     string         `json:"paid_by"`
+			Lines      []purchaseLine `json:"lines"`
 		}
 		if err := httpx.Decode(w, r, 64<<10, &in); err != nil {
 			httpx.Fail(w, r, err)
 			return
 		}
-		supplier, err := text("supplier", in.Supplier, 1, 100)
+		var supplierName string
+		var err error
+		if in.SupplierID == nil {
+			supplierName, err = text("supplier", in.Supplier, 1, 100)
+		} else if in.Supplier != "" {
+			err = bad("bad_supplier", "send supplier_id or a supplier name, not both")
+		}
 		if err == nil {
 			in.InvoiceNo, err = text("invoice_no", in.InvoiceNo, 0, 40)
 		}
@@ -707,8 +796,15 @@ func postPurchase(d *sql.DB) http.HandlerFunc {
 		}
 		if err := checkLines(len(in.Lines), func(i int) (uuid.UUID, error) {
 			l := in.Lines[i]
-			if l.Qty < 1 || l.Qty > maxQty || l.Cost < 0 || l.Cost > maxCost {
-				return l.StockItemID, bad("bad_line", fmt.Sprintf("line %d: quantity must be above zero and cost not negative", i+1))
+			if l.PackID != nil {
+				if l.Qty != 0 || l.Packs < 1 || l.Packs > maxPacks {
+					return l.StockItemID, bad("bad_line", fmt.Sprintf("line %d: with a pack, send how many packs (1 to %d) and no quantity", i+1, maxPacks))
+				}
+			} else if l.Packs != 0 || l.Qty < 1 || l.Qty > maxQty {
+				return l.StockItemID, bad("bad_line", fmt.Sprintf("line %d: quantity must be above zero", i+1))
+			}
+			if l.Cost < 0 || l.Cost > maxCost {
+				return l.StockItemID, bad("bad_line", fmt.Sprintf("line %d: cost must not be negative", i+1))
 			}
 			return l.StockItemID, nil
 		}); err != nil {
@@ -722,6 +818,37 @@ func postPurchase(d *sql.DB) http.HandlerFunc {
 		}
 		p := auth.Must(r.Context())
 		docTx(w, r, d, in.ID, "purchase", in, func(tx *sql.Tx, outlet uuid.UUID, now time.Time, hash []byte) (any, error) {
+			supplier, err := resolveSupplier(r.Context(), tx, p.TenantID, in.SupplierID, supplierName)
+			if err != nil {
+				return nil, err
+			}
+			// Packs become quantities: packs x the pack's size, of its own item.
+			qty := make([]int64, len(in.Lines))
+			for i, l := range in.Lines {
+				qty[i] = l.Qty
+				if l.PackID == nil {
+					continue
+				}
+				var item uuid.UUID
+				var size int64
+				var active bool
+				err := tx.QueryRowContext(r.Context(), `SELECT stock_item_id, qty, active FROM stock_pack WHERE id = $1`, *l.PackID).
+					Scan(&item, &size, &active)
+				if errors.Is(err, sql.ErrNoRows) || (err == nil && item != l.StockItemID) {
+					return nil, bad("unknown_pack", fmt.Sprintf("line %d: that pack is not one of this item's", i+1))
+				}
+				if err != nil {
+					return nil, err
+				}
+				if !active {
+					return nil, bad("pack_inactive", fmt.Sprintf("line %d: that pack is switched off; pick another or receive loose", i+1))
+				}
+				n, ok := mulDivOK(size, l.Packs, 1)
+				if !ok || n > maxQty {
+					return nil, ErrTooLarge
+				}
+				qty[i] = n
+			}
 			items := make([]uuid.UUID, len(in.Lines))
 			for i, l := range in.Lines {
 				items[i] = l.StockItemID
@@ -731,11 +858,11 @@ func postPurchase(d *sql.DB) http.HandlerFunc {
 				return nil, err
 			}
 			var total, trueUp int64
-			for _, l := range in.Lines {
+			for i, l := range in.Lines {
 				total += l.Cost
-				trueUp += b.in(l.StockItemID, l.Qty, l.Cost)
+				trueUp += b.inPacks(l.StockItemID, qty[i], l.Cost, l.PackID, l.Packs)
 			}
-			memo := "Goods received from " + supplier
+			memo := "Goods received from " + supplier.Name
 			if in.InvoiceNo != "" {
 				memo += ", invoice " + in.InvoiceNo
 			}
@@ -745,8 +872,8 @@ func postPurchase(d *sql.DB) http.HandlerFunc {
 				return nil, err
 			}
 			by := p.SubjectID
-			if err := b.finish(header{Kind: "purchase", Supplier: supplier, InvoiceNo: in.InvoiceNo, PaidBy: in.PaidBy,
-				Total: total, CreatedBy: &by, RequestHash: hash}, &e); err != nil {
+			if err := b.finish(header{Kind: "purchase", Supplier: supplier.Name, SupplierID: &supplier.ID, InvoiceNo: in.InvoiceNo,
+				PaidBy: in.PaidBy, Total: total, CreatedBy: &by, RequestHash: hash}, &e); err != nil {
 				return nil, err
 			}
 			return docSummary(r.Context(), tx, in.ID)
@@ -1006,7 +1133,11 @@ func recipes(d *sql.DB) http.HandlerFunc {
 			for _, id := range dishOrder(dishes) {
 				out = append(out, *dishes[id])
 			}
-			return map[string]any{"dishes": out}, nil
+			addons, err := loadAddons(r.Context(), tx, outlet)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"dishes": out, "addons": addons}, nil
 		})
 	}
 }
@@ -1099,6 +1230,104 @@ func loadDishes(ctx context.Context, tx *sql.Tx, outlet uuid.UUID) (map[uuid.UUI
 		}
 	}
 	return dishes, rows.Err()
+}
+
+// Addon is an add-on option ("Extra cheese") with its recipe and what it
+// costs per portion here. Its price is added to the dish's.
+type Addon struct {
+	ID         uuid.UUID    `json:"id"`
+	Name       string       `json:"name"`
+	Group      string       `json:"group"`
+	Price      int64        `json:"price"`        // as on the menu, added to the dish's price
+	NetPrice   int64        `json:"net_price"`    // without GST, when the dishes offering it share one rate
+	Lines      []RecipeLine `json:"lines"`        // current recipe
+	Cost       int64        `json:"cost"`         // paise per portion
+	FoodCostBP int64        `json:"food_cost_bp"` // cost / net price; 0 when it has no price
+	Uncosted   int          `json:"uncosted"`
+}
+
+// loadAddons lists every add-on option with its recipe, costed here.
+func loadAddons(ctx context.Context, tx *sql.Tx, outlet uuid.UUID) ([]Addon, error) {
+	var priceMode string
+	if err := tx.QueryRowContext(ctx, `SELECT price_mode FROM outlet WHERE id = $1`, outlet).Scan(&priceMode); err != nil {
+		return nil, err
+	}
+	// An add-on is taxed with the dish it is on. Prices that include GST are
+	// taken apart only when every dish offering the add-on has one rate.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT o.id, o.name, g.name, o.price_paise,
+		       (SELECT CASE WHEN count(DISTINCT t.rate_bp) = 1 THEN min(t.rate_bp) END
+		        FROM menu_item_modifier_group mg
+		        JOIN menu_item m ON m.id = mg.item_id AND m.tenant_id = mg.tenant_id
+		        JOIN tax_profile t ON t.id = m.tax_profile_id AND t.tenant_id = m.tenant_id
+		        WHERE mg.group_id = g.id)
+		FROM modifier_option o JOIN modifier_group g ON g.id = o.group_id AND g.tenant_id = o.tenant_id
+		ORDER BY lower(g.name), o.sort, lower(o.name), o.id`)
+	if err != nil {
+		return nil, err
+	}
+	out := []Addon{}
+	at := map[uuid.UUID]int{}
+	for rows.Next() {
+		var a Addon
+		var rate sql.NullInt64
+		if err := rows.Scan(&a.ID, &a.Name, &a.Group, &a.Price, &rate); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		a.NetPrice = a.Price
+		if priceMode == "inclusive" {
+			a.NetPrice = 0
+			if rate.Valid {
+				a.NetPrice = mulDiv(a.Price, 10_000, 10_000+rate.Int64)
+			}
+		}
+		a.Lines = []RecipeLine{}
+		at[a.ID] = len(out)
+		out = append(out, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = tx.QueryContext(ctx, `
+		SELECT r.modifier_option_id, r.stock_item_id, i.name, i.unit, r.qty,
+		       coalesce(b.qty, 0), coalesce(b.value, 0), coalesce(b.last_cost, 0)
+		FROM addon_recipe_line r
+		JOIN stock_item i ON i.id = r.stock_item_id AND i.tenant_id = r.tenant_id
+		LEFT JOIN stock_balance b ON b.stock_item_id = r.stock_item_id AND b.outlet_id = $1
+		WHERE r.valid_to IS NULL
+		ORDER BY lower(i.name), r.stock_item_id`, outlet)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var option uuid.UUID
+		var l RecipeLine
+		var b Balance
+		if err := rows.Scan(&option, &l.StockItemID, &l.Name, &l.Unit, &l.Qty, &b.Qty, &b.Value, &b.LastCost); err != nil {
+			return nil, err
+		}
+		k, ok := at[option]
+		if !ok {
+			continue
+		}
+		a := &out[k]
+		l.UnitCost = b.UnitCost()
+		l.Cost = mulDiv(l.UnitCost, l.Qty, 1000)
+		if l.UnitCost <= 0 {
+			a.Uncosted++
+		}
+		a.Lines = append(a.Lines, l)
+		a.Cost += l.Cost
+	}
+	for k := range out {
+		if out[k].NetPrice > 0 {
+			out[k].FoodCostBP = mulDiv(out[k].Cost, 10_000, out[k].NetPrice)
+		}
+	}
+	return out, rows.Err()
 }
 
 // FoodCost is what the kitchen cost over some trading days, against sales.
