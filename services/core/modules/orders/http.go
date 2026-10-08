@@ -16,6 +16,7 @@ import (
 	"1xn/core/internal/platform/db"
 	"1xn/core/internal/platform/httpx"
 	"1xn/core/modules/devices"
+	"1xn/core/modules/identity"
 )
 
 // PullResponse is what a device gets from GET /v1/sync/pull.
@@ -284,6 +285,13 @@ func OpenOrdersHandler(d *sql.DB) http.HandlerFunc {
 		p := auth.Must(r.Context())
 		out := []json.RawMessage{}
 		err = db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
+			// Another business's outlet (hidden by RLS) or none: 404, like
+			// every other outlet route, not an empty floor.
+			if _, err := identity.Outlet(r.Context(), tx, outlet); errors.Is(err, identity.ErrNoOutlet) {
+				return httpx.ErrNotFound
+			} else if err != nil {
+				return err
+			}
 			rows, err := tx.QueryContext(r.Context(),
 				`SELECT doc FROM pos_order WHERE outlet_id = $1 AND status = 'open' ORDER BY opened_at, id`, outlet)
 			if err != nil {

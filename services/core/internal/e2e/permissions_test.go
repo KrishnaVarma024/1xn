@@ -152,3 +152,27 @@ func TestEveryRouteNamesWhoMayCallIt(t *testing.T) {
 		}
 	}
 }
+
+// Every outlet route answers 404 for another business's outlet, as if it
+// did not exist (RLS hides it): never an empty page that looks like an
+// outlet with nothing in it.
+func TestAnotherBusinessesOutletIsNotFound(t *testing.T) {
+	mine := newRestaurant(t, "Outlet Owner", "", "29")
+	theirs := newRestaurant(t, "Next Door Outlet", "", "29")
+	if err := chi.Walk(app.New(appDB).(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method != "GET" || !strings.Contains(route, "{outletID}") {
+			return nil
+		}
+		path := strings.NewReplacer("{outletID}", theirs.OutletID, "{date}", "2026-10-01").Replace(route)
+		for strings.Contains(path, "{") {
+			i, j := strings.Index(path, "{"), strings.Index(path, "}")
+			path = path[:i] + uuid.NewString() + path[j+1:]
+		}
+		if status, _ := call(t, "GET", path, mine.OwnerToken, nil, nil); status != http.StatusNotFound {
+			t.Errorf("GET %s with another business's outlet: %d, want 404", route, status)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
