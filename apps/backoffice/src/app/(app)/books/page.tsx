@@ -3,10 +3,13 @@ import { Badge, EmptyState, PageHeader, Table, td, th } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatPaise } from "@/lib/money";
 import type { TrialBalance } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Books" };
 
 export default async function BooksPage() {
+  if (!(await can("books"))) return <NoAccess page="Books" />;
   const tb = await api<TrialBalance>("/v1/ledger/trial-balance");
   tb.accounts ??= []; // older APIs answered null before the first bill
   const debit = tb.accounts.reduce((s, a) => s + a.debit, 0);

@@ -19,7 +19,7 @@ async function signUp(request: APIRequestContext, name: string): Promise<{ token
 }
 
 async function signIn(page: Page, token: string) {
-  await page.goto("/sign-in");
+  await page.goto("/sign-in/token");
   await page.getByLabel("Owner token").fill(token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/floor$/);

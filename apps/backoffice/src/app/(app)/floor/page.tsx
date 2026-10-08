@@ -8,10 +8,13 @@ import { channelLabel, kotStatusLabel, since } from "@/lib/labels";
 import { formatPaise } from "@/lib/money";
 import { kotTone, openValue } from "@/lib/orders";
 import type { Menu, Order, Table } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Live floor" };
 
 export default async function FloorPage() {
+  if (!(await can("floor"))) return <NoAccess page="Live floor" />;
   const { outlet } = await getContext();
   const [menu, { orders }] = await Promise.all([
     api<Menu>(`/v1/outlets/${outlet.id}/menu`),
@@ -42,12 +45,18 @@ export default async function FloorPage() {
 
       {menu.floors.length === 0 ? (
         <EmptyState title="No tables yet">
-          Add a floor and its tables, and captains can start taking orders.
-          <div className="mt-4">
-            <LinkButton href="/tables" variant="primary">
-              Set up tables
-            </LinkButton>
-          </div>
+          {(await can("menu")) ? (
+            <>
+              Add a floor and its tables, and captains can start taking orders.
+              <div className="mt-4">
+                <LinkButton href="/tables" variant="primary">
+                  Set up tables
+                </LinkButton>
+              </div>
+            </>
+          ) : (
+            "A manager or the owner adds the floors and tables."
+          )}
         </EmptyState>
       ) : (
         menu.floors.map((floor) => (

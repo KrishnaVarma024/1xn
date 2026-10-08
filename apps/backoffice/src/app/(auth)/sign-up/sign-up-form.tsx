@@ -19,8 +19,8 @@ export function SignUpForm() {
       <div className="space-y-4">
         <h2 className="text-lg font-semibold">Your restaurant is ready</h2>
         <p className="text-sm text-ink-soft">
-          This is your owner token. It is shown <strong>only once</strong>. Save it in your password manager: you need it to sign in
-          on another computer.
+          Next time, sign in with your mobile number and a code. This is your owner token, a spare key that never expires: it
+          is shown <strong>only once</strong>, so save it in your password manager.
         </p>
         <div className="rounded-lg border border-marigold-400/50 bg-marigold-50 p-3">
           {/* select-all: one click selects the whole token, for copying by hand. */}

@@ -1,23 +1,26 @@
 import Link from "next/link";
+import { getContext } from "@/lib/context";
+import type { Permission } from "@/lib/types";
 
-const tabs = [
-  { href: "/stock", label: "Items" },
-  { href: "/stock/receive", label: "Receive goods" },
-  { href: "/stock/suppliers", label: "Suppliers" },
-  { href: "/stock/waste", label: "Wastage" },
-  { href: "/stock/count", label: "Count" },
-  { href: "/stock/food-cost", label: "Food cost" },
+const tabs: { href: string; label: string; perm: Permission }[] = [
+  { href: "/stock", label: "Items", perm: "stock" },
+  { href: "/stock/receive", label: "Receive goods", perm: "stock.receive" },
+  { href: "/stock/suppliers", label: "Suppliers", perm: "suppliers" },
+  { href: "/stock/waste", label: "Wastage", perm: "stock.receive" },
+  { href: "/stock/count", label: "Count", perm: "stock.manage" },
+  { href: "/stock/food-cost", label: "Food cost", perm: "costs" },
 ];
 
-/** The stock section's tabs. Each page says which one it is. */
-export function StockTabs({ active }: { active: string }) {
+/** The stock section's tabs a person's role can use. Each page says which one it is. */
+export async function StockTabs({ active }: { active: string }) {
+  const { me } = await getContext();
   return (
     // The grey baseline is an inset shadow, not a border: the active tab's
     // underline covers it without poking out of the box. A tab pulled down
     // over a border (-mb-px) overflowed by one pixel, and Safari drew a
     // scrollbar for it.
     <nav aria-label="Stock" className="mb-6 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] print:hidden">
-      {tabs.map((t) => (
+      {tabs.filter((t) => me.permissions.includes(t.perm)).map((t) => (
         <Link
           key={t.href}
           href={t.href}

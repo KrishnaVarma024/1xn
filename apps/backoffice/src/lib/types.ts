@@ -12,11 +12,46 @@ export type Outlet = {
   gstin?: string;
 };
 
+/** What a person may do; the API's auth/permissions.go says which roles have which. */
+export type Permission =
+  | "floor"
+  | "bills"
+  | "menu"
+  | "devices"
+  | "day"
+  | "stock"
+  | "stock.receive"
+  | "cash.out"
+  | "stock.manage"
+  | "costs"
+  | "suppliers"
+  | "suppliers.pay"
+  | "alerts"
+  | "books"
+  | "staff";
+
+export type Role = "owner" | "manager" | "cashier";
+
 export type Me = {
   tenant_id: string;
   business_name: string;
-  user: { id: string; name: string; phone: string; role: string };
+  user: { id: string; name: string; phone: string; role: Role };
+  permissions: Permission[];
   outlets: Outlet[];
+};
+
+/** A business a mobile number can sign in to. */
+export type SignInAccount = { user_id: string; business_name: string; name: string; role: Role };
+
+/** Someone on the staff list. */
+export type Person = {
+  id: string;
+  name: string;
+  phone: string;
+  role: Role;
+  active: boolean;
+  created_at: string;
+  signed_in: boolean;
 };
 
 export type TaxProfile = { id: string; name: string; rate_bp: number; hsn_sac?: string };

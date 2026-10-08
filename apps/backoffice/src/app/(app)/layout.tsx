@@ -1,5 +1,6 @@
 import { Nav } from "@/components/nav";
 import { getContext } from "@/lib/context";
+import { personRoleLabel } from "@/lib/labels";
 import { signOut } from "../(auth)/actions";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -22,10 +23,12 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </form>
         </div>
         <div className="px-3 pb-3 md:pb-0">
-          <Nav />
+          <Nav perms={me.permissions} />
         </div>
         <div className="hidden px-4 py-4 md:absolute md:bottom-0 md:block md:w-60">
-          <div className="mb-2 truncate text-xs text-ink-faint">Signed in as {me.user.name}</div>
+          <div className="mb-2 truncate text-xs text-ink-faint" data-testid="signed-in-as">
+            Signed in as {me.user.name} · {personRoleLabel[me.user.role] ?? me.user.role}
+          </div>
           <form action={signOut}>
             <button className="text-xs font-medium text-ink-soft hover:text-chilli-700">Sign out</button>
           </form>

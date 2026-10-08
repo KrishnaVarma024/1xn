@@ -9,10 +9,13 @@ import { formatQty } from "@/lib/quantity";
 import type { StockList } from "@/lib/types";
 import { recordWastage } from "../actions";
 import { StockTabs } from "../tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Wastage" };
 
 export default async function WastePage() {
+  if (!(await can("stock.receive"))) return <NoAccess page="Wastage" />;
   const { outlet } = await getContext();
   const { items } = await api<StockList>(`/v1/outlets/${outlet.id}/stock`);
   const usable = items.filter((i) => i.active);

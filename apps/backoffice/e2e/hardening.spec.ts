@@ -32,7 +32,7 @@ async function asOwner<T>(request: APIRequestContext, o: Owner, method: string, 
 }
 
 async function signIn(page: Page, token: string) {
-  await page.goto("/sign-in");
+  await page.goto("/sign-in/token");
   await page.getByLabel("Owner token").fill(token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/floor$/);
@@ -65,7 +65,7 @@ test("with the API down, pages show the app's own error page (not Next's bare 50
       await new Promise((r) => setTimeout(r, 200));
     }
     const ctx = await browser.newContext({ baseURL: `http://localhost:${port}` });
-    await ctx.addCookies([{ name: "onx_owner", value: "onx_o_whatever", url: `http://localhost:${port}` }]);
+    await ctx.addCookies([{ name: "onx_session", value: "onx_o_whatever", url: `http://localhost:${port}` }]);
     const page = await ctx.newPage();
     await page.goto("/floor");
     // src/app/(app)/error.tsx says this; Next's built-in global error says
@@ -120,7 +120,7 @@ test("the live floor survives a 7-second API blip (wall display keeps refreshing
   const stop = await startWeb(port, `http://127.0.0.1:${proxyPort}`);
   try {
     const ctx = await browser.newContext({ baseURL: `http://localhost:${port}` });
-    await ctx.addCookies([{ name: "onx_owner", value: o.token, url: `http://localhost:${port}` }]);
+    await ctx.addCookies([{ name: "onx_session", value: o.token, url: `http://localhost:${port}` }]);
     const page = await ctx.newPage();
     await page.goto("/floor");
     await expect(page.getByRole("heading", { name: "Live floor" })).toBeVisible();
@@ -217,7 +217,7 @@ test("Copy token works on a plain-http address, where the browser has no clipboa
 });
 
 test("a pasted token with a stray non-ASCII character is 'wrong', not 'API unreachable'", async ({ page }) => {
-  await page.goto("/sign-in");
+  await page.goto("/sign-in/token");
   // The placeholder itself ends in "…"; chat apps also add zero-width spaces.
   await page.getByLabel("Owner token").fill("onx_o_abc\u200b");
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -368,13 +368,14 @@ test("an outlet cookie naming someone else's outlet falls back to your own", asy
 
 test("a revoked/garbage token cookie lands on /sign-in?expired=1 once, and signing in again works", async ({ page, request }) => {
   const o = await signUpViaAPI(request, "Stale Cookie Cafe");
-  await page.context().addCookies([{ name: "onx_owner", value: "onx_o_revoked", url: `http://localhost:${WEB_PORT}` }]);
+  await page.context().addCookies([{ name: "onx_session", value: "onx_o_revoked", url: `http://localhost:${WEB_PORT}` }]);
   const seen: string[] = [];
   page.on("framenavigated", (f) => f === page.mainFrame() && seen.push(f.url()));
   await page.goto("/menu");
   await expect(page).toHaveURL(/\/sign-in\?expired=1$/);
   await expect(page.getByText("Your session ended")).toBeVisible();
   expect(seen.length).toBeLessThan(4);
+  await page.getByRole("link", { name: "Use the token instead" }).click();
   await page.getByLabel("Owner token").fill(o.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/floor$/);

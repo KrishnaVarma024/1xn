@@ -6,7 +6,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC = ["/sign-in", "/sign-up"];
 
 export function proxy(req: NextRequest) {
-  const signedIn = req.cookies.has("onx_owner");
+  const signedIn = req.cookies.has("onx_session");
   const isPublic = PUBLIC.some((p) => req.nextUrl.pathname.startsWith(p));
   if (!signedIn && !isPublic) {
     return NextResponse.redirect(new URL("/sign-in", req.url));

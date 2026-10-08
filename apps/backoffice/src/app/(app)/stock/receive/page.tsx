@@ -11,19 +11,24 @@ import { formatQty } from "@/lib/quantity";
 import type { StockDoc, StockList, SupplierList } from "@/lib/types";
 import { recordPurchase } from "../actions";
 import { StockTabs } from "../tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Receive goods" };
 
 const ROWS = 8;
 
 export default async function ReceivePage() {
+  if (!(await can("stock.receive"))) return <NoAccess page="Receive goods" />;
   const { outlet } = await getContext();
   const [{ items }, { documents }, { suppliers }] = await Promise.all([
     api<StockList>(`/v1/outlets/${outlet.id}/stock`),
     api<{ documents: StockDoc[] }>(`/v1/outlets/${outlet.id}/stock/purchases`),
-    api<SupplierList>(`/v1/outlets/${outlet.id}/stock/suppliers`),
+    // Suppliers' names for the list; what they are owed is not a cashier's business.
+    (await can("suppliers")) ? api<SupplierList>(`/v1/outlets/${outlet.id}/stock/suppliers`) : { suppliers: [], owed: 0 },
   ]);
   const usable = items.filter((i) => i.active);
+  const [cashOut, packs] = [await can("cash.out"), await can("stock.manage")];
   const today = tradingDayIST();
 
   return (
@@ -54,8 +59,8 @@ export default async function ReceivePage() {
               <Field label="Paid by" hint="from a till: the cashier also records it on the till as a supplier payout">
                 <Select name="paid_by" defaultValue="credit">
                   <option value="credit">On credit (pay later)</option>
-                  <option value="bank">Bank or UPI</option>
-                  <option value="safe">Cash from the safe</option>
+                  {cashOut && <option value="bank">Bank or UPI</option>}
+                  {cashOut && <option value="safe">Cash from the safe</option>}
                   <option value="till">Cash from a till drawer</option>
                 </Select>
               </Field>
@@ -91,9 +96,11 @@ export default async function ReceivePage() {
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <SubmitButton pendingText="Booking…">Book the delivery</SubmitButton>
-              <span className="text-xs text-ink-faint">
-                Bought by the sack or tin? Add the pack on the item&apos;s page and it shows up in the list.
-              </span>
+              {packs && (
+                <span className="text-xs text-ink-faint">
+                  Bought by the sack or tin? Add the pack on the item&apos;s page and it shows up in the list.
+                </span>
+              )}
             </div>
           </ActionForm>
         </Card>

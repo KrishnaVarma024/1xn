@@ -7,10 +7,13 @@ import { isUUID } from "@/lib/ids";
 import { channelLabel, dateTimeIST, methodLabel } from "@/lib/labels";
 import { formatPaise, formatRate } from "@/lib/money";
 import type { Bill } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Bill" };
 
 export default async function BillPage({ params }: PageProps<"/bills/[id]">) {
+  if (!(await can("bills"))) return <NoAccess page="Bill" />;
   const { id } = await params;
   if (!isUUID(id)) notFound();
   let bill: Bill;

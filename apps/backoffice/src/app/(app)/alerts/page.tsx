@@ -3,12 +3,15 @@ import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { api } from "@/lib/api";
 import { alertText, dateTimeIST } from "@/lib/labels";
 import type { Alert } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Alerts" };
 
 const tone = { info: "info", warning: "warn", critical: "bad" } as const;
 
 export default async function AlertsPage() {
+  if (!(await can("alerts"))) return <NoAccess page="Alerts" />;
   const { alerts } = await api<{ alerts: Alert[] }>("/v1/alerts");
   return (
     <>

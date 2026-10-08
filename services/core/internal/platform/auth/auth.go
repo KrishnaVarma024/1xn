@@ -1,9 +1,11 @@
-// Package auth issues and checks bearer tokens.
+// Package auth issues and checks bearer tokens, and says who may do what.
 //
-// This is deliberately simple P0 auth: opaque random tokens, stored hashed.
-// Owners get one at signup; devices get one when they pair. Real owner login
-// (OTP on WhatsApp/SMS, sessions, staff PINs) comes with the identity module
-// proper. See docs/adr/0009.
+// Tokens are opaque random strings, stored hashed (ADR 0009). Three kinds:
+// the owner token made at sign-up (never expires; developers and the seed use
+// it), a session made when a person signs in with a one-time code (expires;
+// ADR 0019), and a device token made when a till pairs. A person's role
+// (owner, manager, cashier) is read with the token on every request, so a
+// change of role or a switched-off person takes effect at once.
 package auth
 
 import (
@@ -21,19 +23,25 @@ import (
 	"1xn/core/internal/platform/httpx"
 )
 
-// Kind of principal behind a token.
+// Kind of token.
 type Kind string
 
 const (
-	Owner  Kind = "owner"
-	Device Kind = "device"
+	OwnerToken Kind = "owner"   // made at sign-up for the owner; never expires
+	Session    Kind = "session" // made when a person signs in with a code; expires
+	Device     Kind = "device"  // made when a device pairs
 )
+
+// People are the token kinds a person holds (the back office's callers).
+var People = []Kind{OwnerToken, Session}
 
 // Principal is who is calling: which tenant, what kind, and their id.
 type Principal struct {
 	TenantID  uuid.UUID
 	Kind      Kind
-	SubjectID uuid.UUID // app_user.id for owners, device.id for devices
+	SubjectID uuid.UUID // app_user.id for people, device.id for devices
+	Role      Role      // a person's role; empty for devices
+	TokenHash []byte    // the hash of the token used (to sign it out)
 }
 
 type ctxKey struct{}
@@ -50,8 +58,8 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 }
 
 // NewToken returns a new random token and the hash to store. The prefix
-// ("onx_o_" or "onx_d_") makes leaked tokens easy to spot and lets secret
-// scanners (GitHub's included) find them in code and logs.
+// ("onx_o_", "onx_s_" or "onx_d_") makes leaked tokens easy to spot and lets
+// secret scanners (GitHub's included) find them in code and logs.
 func NewToken(kind Kind) (token string, hash []byte) {
 	b := make([]byte, 32) // 256 bits: unguessable
 	if _, err := rand.Read(b); err != nil {
@@ -77,11 +85,11 @@ func Middleware(d *sql.DB, kinds ...Kind) func(http.Handler) http.Handler {
 				httpx.Fail(w, r, httpx.ErrUnauthorized)
 				return
 			}
-			var p Principal
-			var kind string
+			p := Principal{TokenHash: Hash(token)}
+			var kind, role string
 			err := d.QueryRowContext(r.Context(),
-				`SELECT tenant_id, kind, subject_id FROM auth_resolve($1)`, Hash(token)).
-				Scan(&p.TenantID, &kind, &p.SubjectID)
+				`SELECT tenant_id, kind, subject_id, role FROM auth_resolve($1)`, p.TokenHash).
+				Scan(&p.TenantID, &kind, &p.SubjectID, &role)
 			if errors.Is(err, sql.ErrNoRows) {
 				httpx.Fail(w, r, httpx.ErrUnauthorized)
 				return
@@ -90,7 +98,7 @@ func Middleware(d *sql.DB, kinds ...Kind) func(http.Handler) http.Handler {
 				httpx.Fail(w, r, err)
 				return
 			}
-			p.Kind = Kind(kind)
+			p.Kind, p.Role = Kind(kind), Role(role)
 			allowed := false
 			for _, k := range kinds {
 				allowed = allowed || k == p.Kind

@@ -10,10 +10,13 @@ import type { StockList } from "@/lib/types";
 import { createStockItem } from "./actions";
 import { StockStatus } from "./status";
 import { StockTabs } from "./tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Stock" };
 
 export default async function StockPage() {
+  if (!(await can("stock"))) return <NoAccess page="Stock" />;
   const { outlet } = await getContext();
   const { items, value } = await api<StockList>(`/v1/outlets/${outlet.id}/stock`);
   const active = items.filter((i) => i.active);
@@ -71,24 +74,26 @@ export default async function StockPage() {
         </Table>
       )}
 
-      <Card title="Add an item" className="mt-6">
-        <ActionForm action={createStockItem} label="Add a stock item" className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
-          <Field label="Name">
-            <Input name="name" placeholder="Paneer" required maxLength={100} />
-          </Field>
-          <Field label="Counted in">
-            <Select name="unit" defaultValue="kg">
-              <option value="kg">kg (grams)</option>
-              <option value="l">litres (ml)</option>
-              <option value="pc">pieces</option>
-            </Select>
-          </Field>
-          <Field label="Reorder at" hint="optional, like 2 or 500 g">
-            <Input name="reorder" placeholder="2" />
-          </Field>
-          <SubmitButton>Add item</SubmitButton>
-        </ActionForm>
-      </Card>
+      {(await can("stock.manage")) && (
+        <Card title="Add an item" className="mt-6">
+          <ActionForm action={createStockItem} label="Add a stock item" className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
+            <Field label="Name">
+              <Input name="name" placeholder="Paneer" required maxLength={100} />
+            </Field>
+            <Field label="Counted in">
+              <Select name="unit" defaultValue="kg">
+                <option value="kg">kg (grams)</option>
+                <option value="l">litres (ml)</option>
+                <option value="pc">pieces</option>
+              </Select>
+            </Field>
+            <Field label="Reorder at" hint="optional, like 2 or 500 g">
+              <Input name="reorder" placeholder="2" />
+            </Field>
+            <SubmitButton>Add item</SubmitButton>
+          </ActionForm>
+        </Card>
+      )}
     </>
   );
 }

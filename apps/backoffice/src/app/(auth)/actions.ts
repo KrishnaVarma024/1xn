@@ -3,10 +3,97 @@
 import { redirect } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { text, type FormState } from "@/lib/actions";
-import { clearSession, setToken } from "@/lib/session";
+import { mustUUID } from "@/lib/ids";
 import { normalisePhone } from "@/lib/phone";
+import {
+  clearSession,
+  clearSignIn,
+  getPendingCode,
+  getTicket,
+  getToken,
+  setPendingCode,
+  setTicket,
+  setToken,
+} from "@/lib/session";
 import { stateName } from "@/lib/states";
-import type { Me } from "@/lib/types";
+import type { Me, SignInAccount } from "@/lib/types";
+
+/** The API's messages are sentence fragments ("that code is wrong; 4 tries left"). */
+function sentence(msg: string): string {
+  const s = msg.charAt(0).toUpperCase() + msg.slice(1);
+  return /[.!?]$/.test(s) ? s : s + ".";
+}
+
+// Signing in with a mobile number: (1) send a code, (2) check it, (3) if the
+// number works at several businesses, pick one. The challenge id and the
+// ticket stay in short-lived httpOnly cookies between steps.
+
+export async function requestCode(_: FormState, form: FormData): Promise<FormState> {
+  const phone = normalisePhone(text(form, "phone"));
+  if (!phone) return { error: "Enter your 10-digit mobile number, or the full number with + and the country code." };
+  try {
+    const ch = await api<{ challenge_id: string }>("/v1/auth/otp", { method: "POST", body: { phone }, token: null });
+    await setPendingCode({ challenge: ch.challenge_id, phone });
+  } catch (err) {
+    if (err instanceof ApiError) return { error: sentence(err.message) };
+    throw err;
+  }
+  redirect("/sign-in/code");
+}
+
+export type CodeState = (FormState & { accounts?: SignInAccount[] }) | undefined;
+
+export async function verifyCode(_: CodeState, form: FormData): Promise<CodeState> {
+  const pending = await getPendingCode();
+  if (!pending) redirect("/sign-in");
+  const code = text(form, "code").replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(code)) return { error: "Type the 6 digits from the message." };
+  let v: { ticket: string; accounts: SignInAccount[] };
+  try {
+    v = await api("/v1/auth/otp/verify", { method: "POST", body: { challenge_id: pending.challenge, code }, token: null });
+  } catch (err) {
+    if (err instanceof ApiError) return { error: sentence(err.message) };
+    throw err;
+  }
+  if (v.accounts.length === 1) return startSession(v.ticket, v.accounts[0].user_id);
+  await setTicket(v.ticket);
+  return { accounts: v.accounts };
+}
+
+/** The number works at several businesses: this one. */
+export async function chooseBusiness(userId: string): Promise<CodeState> {
+  mustUUID(userId);
+  const ticket = await getTicket();
+  if (!ticket) return { error: "Signing in took too long. Start again with your number." };
+  return startSession(ticket, userId);
+}
+
+async function startSession(ticket: string, userId: string): Promise<CodeState> {
+  let token: string;
+  try {
+    ({ token } = await api<{ token: string }>("/v1/auth/sessions", { method: "POST", body: { ticket, user_id: userId }, token: null }));
+  } catch (err) {
+    if (err instanceof ApiError) return { error: sentence(err.message) };
+    throw err;
+  }
+  await clearSignIn();
+  await clearSession(); // another business's outlet choice does not carry over
+  await setToken(token);
+  redirect("/floor");
+}
+
+export async function resendCode(): Promise<CodeState> {
+  const pending = await getPendingCode();
+  if (!pending) redirect("/sign-in");
+  try {
+    const ch = await api<{ challenge_id: string }>("/v1/auth/otp", { method: "POST", body: { phone: pending.phone }, token: null });
+    await setPendingCode({ challenge: ch.challenge_id, phone: pending.phone });
+  } catch (err) {
+    if (err instanceof ApiError) return { error: sentence(err.message) };
+    throw err;
+  }
+  return { ok: "A new code is on its way. The old one no longer works." };
+}
 
 export async function signIn(_: FormState, form: FormData): Promise<FormState> {
   const token = text(form, "token");
@@ -75,6 +162,10 @@ export async function signUp(_: SignUpState, form: FormData): Promise<SignUpStat
 }
 
 export async function signOut() {
+  // End the session at the API too (an owner token is kept: it is the key
+  // from sign-up). Passing the token means a refusal does not redirect.
+  const token = await getToken();
+  if (token) await api("/v1/auth/sign-out", { method: "POST", token }).catch(() => undefined);
   await clearSession();
   redirect("/sign-in");
 }

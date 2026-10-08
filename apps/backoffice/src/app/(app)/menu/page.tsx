@@ -7,10 +7,13 @@ import { formatPrice, formatRate } from "@/lib/money";
 import type { Item, Menu } from "@/lib/types";
 import { addCategory, addItem, addModifierGroup, addSection, addTaxProfile, setAvailable, updateItem } from "./actions";
 import { ItemFields } from "./item-fields";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Menu" };
 
 export default async function MenuPage() {
+  if (!(await can("menu"))) return <NoAccess page="Menu" />;
   const { outlet } = await getContext();
   const menu = await api<Menu>(`/v1/outlets/${outlet.id}/menu`);
   const ready = menu.categories.length > 0 && menu.tax_profiles.length > 0;

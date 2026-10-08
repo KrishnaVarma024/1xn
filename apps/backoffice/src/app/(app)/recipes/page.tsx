@@ -9,6 +9,8 @@ import { formatPaise, formatRate } from "@/lib/money";
 import { formatQty, qtyToFriendlyInput } from "@/lib/quantity";
 import type { Addon, Dish, RecipeLine, StockItem, StockList } from "@/lib/types";
 import { saveAddonRecipe, saveRecipe } from "../stock/actions";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Recipes" };
 
@@ -18,6 +20,7 @@ const BLANK_ROWS = 3;
 const MAX_ROWS = 50; // the API takes at most 50 ingredients
 
 export default async function RecipesPage() {
+  if (!(await can("costs"))) return <NoAccess page="Recipes" />;
   const { outlet } = await getContext();
   const [{ dishes, addons }, { items }] = await Promise.all([
     api<{ dishes: Dish[]; addons: Addon[] }>(`/v1/outlets/${outlet.id}/stock/recipes`),

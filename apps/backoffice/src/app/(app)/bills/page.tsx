@@ -7,10 +7,13 @@ import { isRealDay, longDate } from "@/lib/dates";
 import { channelLabel, methodLabel, timeIST, todayIST } from "@/lib/labels";
 import { formatPaise } from "@/lib/money";
 import type { DayBills } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Bills" };
 
 export default async function BillsPage({ searchParams }: PageProps<"/bills">) {
+  if (!(await can("bills"))) return <NoAccess page="Bills" />;
   const { date } = await searchParams;
   const day = isRealDay(date) ? date : todayIST();
   const { outlet } = await getContext();

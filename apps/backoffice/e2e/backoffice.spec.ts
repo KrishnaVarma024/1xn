@@ -6,7 +6,7 @@ const API = process.env.E2E_API_URL ?? "http://localhost:8080";
 const core = path.resolve(__dirname, "../../../services/core");
 
 async function signIn(page: Page, token: string) {
-  await page.goto("/sign-in");
+  await page.goto("/sign-in/token");
   await page.getByLabel("Owner token").fill(token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/floor$/);
@@ -34,7 +34,7 @@ test("a new restaurant signs up and builds its menu, tables and devices", async 
   const token = (await page.getByTestId("owner-token").textContent())!.trim();
   expect(token).toMatch(/^onx_o_/);
   // The session cookie holds the token, but page scripts cannot read it.
-  const cookie = (await page.context().cookies()).find((c) => c.name === "onx_owner");
+  const cookie = (await page.context().cookies()).find((c) => c.name === "onx_session");
   expect(cookie?.httpOnly).toBe(true);
   expect(cookie?.sameSite).toBe("Lax");
   expect(await page.evaluate(() => document.cookie)).not.toContain("onx_o_");
@@ -173,6 +173,7 @@ test("a new restaurant signs up and builds its menu, tables and devices", async 
   // Sign out, and a bad token is refused.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
+  await page.getByRole("link", { name: "Use the token instead" }).click();
   await page.getByLabel("Owner token").fill("onx_o_not-a-real-token");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("form", { name: "Sign in" }).getByRole("alert")).toContainText("did not work");

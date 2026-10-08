@@ -15,6 +15,13 @@ export const roleLabel: Record<string, string> = {
   hub: "Outlet hub",
 };
 
+/** People's roles in a restaurant. */
+export const personRoleLabel: Record<string, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  cashier: "Cashier",
+};
+
 export const methodLabel: Record<string, string> = {
   cash: "Cash",
   upi: "UPI",
@@ -151,6 +158,11 @@ export function since(iso: string, now = Date.now()): string {
   const min = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
   if (min < 60) return `${min} min`;
   return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min`;
+}
+
+/** The day in India of a moment: "2026-10-08" for 2026-10-07T20:00:00Z. */
+export function dayIST(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
 }
 
 export function todayIST(): string {

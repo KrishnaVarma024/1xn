@@ -147,8 +147,8 @@ type itemInput struct {
 	Active       *bool   `json:"active"`
 }
 
-// OwnerRoutes is mounted at /v1/stock (owner): the tenant's stock items and
-// recipes, shared by its outlets.
+// OwnerRoutes is mounted at /v1/stock (permission stock.manage): the tenant's
+// stock items and recipes, shared by its outlets.
 //
 //	POST  /items                    {name, unit: kg|l|pc, reorder_level}
 //	PATCH /items/{id}               {name?, reorder_level?, active?}
@@ -452,18 +452,22 @@ func plural(n int, one, many string) string {
 // Documents carry an id the back office made before submitting (a UUIDv7):
 // sending the same one again returns the first result and books nothing.
 func OutletRoutes(d *sql.DB) http.Handler {
+	// Each route names the permission it needs (auth/permissions.go says
+	// which roles have it): a cashier receives goods, a manager counts and
+	// sees costs, only the owner pays suppliers.
 	r := chi.NewRouter()
-	r.Get("/", listItems(d))
-	r.Get("/items/{itemID}", itemHistory(d))
-	r.Post("/purchases", postPurchase(d))
-	r.Get("/purchases", listPurchases(d))
-	r.Post("/wastage", postWastage(d))
-	r.Post("/counts", postCount(d))
-	r.Get("/recipes", recipes(d))
-	r.Get("/food-cost", foodCost(d))
-	r.Get("/suppliers", listSuppliers(d))
-	r.Get("/suppliers/{supplierID}", supplierStatement(d))
-	r.Post("/supplier-payments", postSupplierPayment(d))
+	need := func(p auth.Permission) chi.Router { return r.With(auth.Need(p)) }
+	need(auth.Stock).Get("/", listItems(d))
+	need(auth.Stock).Get("/items/{itemID}", itemHistory(d))
+	need(auth.Stock).Get("/purchases", listPurchases(d))
+	need(auth.StockReceive).Post("/purchases", postPurchase(d))
+	need(auth.StockReceive).Post("/wastage", postWastage(d))
+	need(auth.StockManage).Post("/counts", postCount(d))
+	need(auth.Costs).Get("/recipes", recipes(d))
+	need(auth.Costs).Get("/food-cost", foodCost(d))
+	need(auth.Suppliers).Get("/suppliers", listSuppliers(d))
+	need(auth.Suppliers).Get("/suppliers/{supplierID}", supplierStatement(d))
+	need(auth.PaySuppliers).Post("/supplier-payments", postSupplierPayment(d))
 	return r
 }
 
@@ -792,6 +796,15 @@ func postPurchase(d *sql.DB) http.HandlerFunc {
 		if !paidBy[in.PaidBy] {
 			httpx.Fail(w, r, bad("bad_paid_by",
 				"paid_by must be safe (cash from the safe), till (cash from a till drawer: the till records the payout), bank or credit"))
+			return
+		}
+		// Whoever receives goods may book them on credit or paid from a till
+		// (the drawer count checks that); saying money left the safe or the
+		// bank takes a manager. Separation of duties: the person handling the
+		// goods cannot also move the money that paid for them.
+		if (in.PaidBy == "safe" || in.PaidBy == "bank") && !auth.Can(auth.Must(r.Context()).Role, auth.CashOut) {
+			httpx.Fail(w, r, httpx.E(http.StatusForbidden, "forbidden",
+				"your role books deliveries on credit or paid from a till; the safe and the bank are for a manager or the owner"))
 			return
 		}
 		if err := checkLines(len(in.Lines), func(i int) (uuid.UUID, error) {

@@ -8,10 +8,13 @@ import { tradingDayIST } from "@/lib/labels";
 import { formatPaise, formatRate } from "@/lib/money";
 import type { FoodCost } from "@/lib/types";
 import { StockTabs } from "../tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Food cost" };
 
 export default async function FoodCostPage({ searchParams }: PageProps<"/stock/food-cost">) {
+  if (!(await can("costs"))) return <NoAccess page="Food cost" />;
   const q = await searchParams;
   const today = tradingDayIST();
   const to = isRealDay(q.to) && q.to <= today ? q.to : today;

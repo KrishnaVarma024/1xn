@@ -45,7 +45,12 @@ Demo restaurant ready. Its bills are on business day %s.
 
     %s
 
-  Sign in to the back office: http://localhost:3000/sign-in
+  Sign in to the back office: http://localhost:3000/sign-in/token
+
+  Or sign in with a mobile number at http://localhost:3000/sign-in:
+    98765 43210 (Ravi, owner), 99000 00001 (Priya, manager), 99000 00002 (Asha, cashier).
+    There is no SMS yet: the code is printed in the terminal running make run (look for SIGN-IN CODE).
+    Each make seed adds another restaurant with these numbers, so you pick which one after the code.
 `, day, token)
 }
 
@@ -264,6 +269,17 @@ func seed() (token, businessDay string, err error) {
 		return "", "", err
 	}
 	fmt.Println("  devices: Counter 1 (till), Captain Anil (phone), Tandoor screen (KDS)")
+
+	// Staff, who sign in with their own numbers and a code.
+	for _, p := range []map[string]any{
+		{"name": "Priya", "phone": "+919900000001", "role": "manager"},
+		{"name": "Asha", "phone": "+919900000002", "role": "cashier"},
+	} {
+		if err := post("/v1/staff", p, nil); err != nil {
+			return "", "", err
+		}
+	}
+	fmt.Println("  staff: Priya (manager), Asha (cashier)")
 
 	at := func(minAgo int) time.Time { return now.Add(-time.Duration(minAgo) * time.Minute) }
 	newLine := func(name string, qty int64, mods ...pricing.Modifier) line {

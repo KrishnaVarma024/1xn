@@ -1,6 +1,6 @@
 # 0009. P0 authentication: opaque, hashed bearer tokens
 
-Status: accepted, 29 Sep 2026
+Status: accepted, 29 Sep 2026; staff identity and roles added by ADR 0019 (8 Oct 2026)
 
 ## Context
 

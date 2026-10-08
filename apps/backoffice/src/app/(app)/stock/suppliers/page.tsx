@@ -10,10 +10,13 @@ import { formatPhone } from "@/lib/phone";
 import type { SupplierList } from "@/lib/types";
 import { StockTabs } from "../tabs";
 import { createSupplier } from "./actions";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Suppliers" };
 
 export default async function SuppliersPage() {
+  if (!(await can("suppliers"))) return <NoAccess page="Suppliers" />;
   const { outlet } = await getContext();
   const { suppliers, owed } = await api<SupplierList>(`/v1/outlets/${outlet.id}/stock/suppliers`);
   const due = suppliers.filter((s) => s.owed > 0);
@@ -66,20 +69,22 @@ export default async function SuppliersPage() {
         </Table>
       )}
 
-      <Card title="Add a supplier" className="mt-6">
-        <ActionForm action={createSupplier} label="Add a supplier" className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
-          <Field label="Name">
-            <Input name="name" placeholder="Grain House" required maxLength={100} />
-          </Field>
-          <Field label="Phone" hint="optional">
-            <Input name="phone" inputMode="tel" placeholder="98765 43210" />
-          </Field>
-          <Field label="GSTIN" hint="optional">
-            <Input name="gstin" maxLength={20} placeholder="29ABCDE1234F1ZW" />
-          </Field>
-          <SubmitButton>Add supplier</SubmitButton>
-        </ActionForm>
-      </Card>
+      {(await can("stock.manage")) && (
+        <Card title="Add a supplier" className="mt-6">
+          <ActionForm action={createSupplier} label="Add a supplier" className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
+            <Field label="Name">
+              <Input name="name" placeholder="Grain House" required maxLength={100} />
+            </Field>
+            <Field label="Phone" hint="optional">
+              <Input name="phone" inputMode="tel" placeholder="98765 43210" />
+            </Field>
+            <Field label="GSTIN" hint="optional">
+              <Input name="gstin" maxLength={20} placeholder="29ABCDE1234F1ZW" />
+            </Field>
+            <SubmitButton>Add supplier</SubmitButton>
+          </ActionForm>
+        </Card>
+      )}
     </>
   );
 }

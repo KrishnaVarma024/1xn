@@ -12,10 +12,13 @@ import { formatPaise, formatRate } from "@/lib/money";
 import { newDocId } from "@/lib/ids";
 import type { DayList, DayView, OpenShift, Shift, ZReport } from "@/lib/types";
 import { closeDay, closeShiftHere } from "./actions";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Day close" };
 
 export default async function DayPage({ searchParams }: PageProps<"/day">) {
+  if (!(await can("day"))) return <NoAccess page="Day close" />;
   const { date, view, closed, meanwhile } = await searchParams;
   const { outlet } = await getContext();
   const [list, open] = await Promise.all([

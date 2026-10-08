@@ -45,6 +45,7 @@ NEXT_TELEMETRY_DISABLED=1 npx next build >"$WORK/build.log" 2>&1 || { cat "$WORK
 [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] || npx playwright install chromium >/dev/null
 
 echo "== browser tests"
-E2E_API_URL="http://localhost:${API_PORT}" E2E_WEB_PORT="$WEB_PORT" npx playwright test "$@" || {
+# Sign-in codes are printed in the API's log (no SMS here); tests read them there.
+E2E_API_URL="http://localhost:${API_PORT}" E2E_API_LOG="$WORK/api.log" E2E_WEB_PORT="$WEB_PORT" npx playwright test "$@" || {
   echo "--- API log (last 40 lines)"; tail -40 "$WORK/api.log"; exit 1;
 }

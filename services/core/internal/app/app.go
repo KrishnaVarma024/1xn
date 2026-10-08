@@ -26,13 +26,29 @@ import (
 	"1xn/core/modules/syncgw"
 )
 
+// Option changes how New builds the API.
+type Option func(*options)
+
+type options struct {
+	codes identity.CodeSender
+}
+
+// WithCodeSender sets how sign-in codes reach people's phones (tests capture
+// them; development prints them in the log).
+func WithCodeSender(s identity.CodeSender) Option { return func(o *options) { o.codes = s } }
+
 // New returns the API handler.
 //
-//	Public:  POST /v1/signup, POST /v1/devices/register, GET /healthz, GET /readyz
-//	Owner:   /v1/outlets/{id}/pairing-codes|floors|tables|orders|days|stock, /v1/catalogue/*, /v1/stock/*,
-//	         /v1/orders/{id}, /v1/bills/{id}, /v1/ledger/trial-balance, /v1/alerts
+//	Public:  POST /v1/signup, /v1/auth/otp, /v1/auth/otp/verify, /v1/auth/sessions,
+//	         POST /v1/devices/register, GET /healthz, GET /readyz
+//	People:  GET /v1/me, POST /v1/auth/sign-out, and every back office route below, each
+//	         behind the permission it needs (auth/permissions.go: which roles have which)
 //	Device:  GET /v1/devices/me/menu, POST /v1/sync/push, GET /v1/sync/pull
-func New(d *sql.DB) http.Handler {
+func New(d *sql.DB, opts ...Option) http.Handler {
+	o := options{codes: identity.LogSender{}}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	appliers := map[string]syncop.Applier{sales.OpBillSettled: sales.ApplySettledBill}
 	for op, fn := range orders.Appliers() {
 		appliers[op] = fn
@@ -61,31 +77,34 @@ func New(d *sql.DB) http.Handler {
 	r.Route("/v1", func(r chi.Router) {
 		// Public.
 		r.Mount("/signup", identity.Routes(d))
+		r.Mount("/auth", identity.LoginRoutes(d, o.codes))
 		r.Post("/devices/register", devices.RegisterHandler(d))
 
-		// Owner.
+		// People: the back office. Every route says which permission it needs.
 		r.Group(func(r chi.Router) {
-			r.Use(auth.Middleware(d, auth.Owner))
+			r.Use(auth.Middleware(d, auth.People...))
+			need := func(r chi.Router, p auth.Permission) chi.Router { return r.With(auth.Need(p)) }
 			r.Get("/me", identity.MeHandler(d))
 			r.Route("/outlets/{outletID}", func(r chi.Router) {
-				r.Get("/menu", catalogue.OutletMenuHandler(d))
-				r.Post("/pairing-codes", devices.PairingCodeHandler(d))
-				r.Get("/devices", devices.ListHandler(d))
-				r.Post("/floors", catalogue.CreateFloorHandler(d))
-				r.Post("/tables", catalogue.CreateTableHandler(d))
-				r.Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
-				r.Get("/orders", orders.OpenOrdersHandler(d))
-				r.Mount("/days", dayclose.Routes(d))
-				r.Mount("/shifts", dayclose.ShiftRoutes(d))
-				r.Mount("/stock", stock.OutletRoutes(d))
+				need(r, auth.Floor).Get("/menu", catalogue.OutletMenuHandler(d))
+				need(r, auth.Floor).Get("/orders", orders.OpenOrdersHandler(d))
+				need(r, auth.Devices).Post("/pairing-codes", devices.PairingCodeHandler(d))
+				need(r, auth.Devices).Get("/devices", devices.ListHandler(d))
+				need(r, auth.Menu).Post("/floors", catalogue.CreateFloorHandler(d))
+				need(r, auth.Menu).Post("/tables", catalogue.CreateTableHandler(d))
+				need(r, auth.Menu).Patch("/tables/{tableID}", catalogue.UpdateTableHandler(d))
+				need(r, auth.Day).Mount("/days", dayclose.Routes(d))
+				need(r, auth.Day).Mount("/shifts", dayclose.ShiftRoutes(d))
+				r.Mount("/stock", stock.OutletRoutes(d)) // permissions per route, inside
 			})
-			r.Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))
-			r.Get("/orders/{orderID}", orders.GetOrderHandler(d))
-			r.Mount("/catalogue", catalogue.OwnerRoutes(d))
-			r.Mount("/bills", sales.Routes(d))
-			r.Mount("/ledger", ledger.Routes(d))
-			r.Mount("/stock", stock.OwnerRoutes(d))
-			r.Mount("/alerts", alerts.Routes(d))
+			need(r, auth.Devices).Post("/devices/{deviceID}/revoke", devices.RevokeHandler(d))
+			need(r, auth.Floor).Get("/orders/{orderID}", orders.GetOrderHandler(d))
+			need(r, auth.Menu).Mount("/catalogue", catalogue.OwnerRoutes(d))
+			need(r, auth.Bills).Mount("/bills", sales.Routes(d))
+			need(r, auth.Books).Mount("/ledger", ledger.Routes(d))
+			need(r, auth.StockManage).Mount("/stock", stock.OwnerRoutes(d))
+			need(r, auth.Alerts).Mount("/alerts", alerts.Routes(d))
+			need(r, auth.Staff).Mount("/staff", identity.StaffRoutes(d))
 		})
 
 		// Device.

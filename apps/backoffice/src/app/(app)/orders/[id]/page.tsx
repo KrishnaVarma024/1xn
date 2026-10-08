@@ -9,6 +9,8 @@ import { channelLabel, dateTimeIST, kotStatusLabel, timeIST } from "@/lib/labels
 import { formatPaise } from "@/lib/money";
 import { billedValue, kotTone, lineValue, orderValue } from "@/lib/orders";
 import type { Menu, Order, OrderLine } from "@/lib/types";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Order" };
 
@@ -16,6 +18,7 @@ const lineTone = { held: "neutral", fired: "info", billed: "good", voided: "bad"
 const lineLabel = { held: "Not sent", fired: "In kitchen", billed: "Billed", voided: "Voided" };
 
 export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
+  if (!(await can("floor"))) return <NoAccess page="Order" />;
   const { id } = await params;
   if (!isUUID(id)) notFound();
   const { outlet } = await getContext();

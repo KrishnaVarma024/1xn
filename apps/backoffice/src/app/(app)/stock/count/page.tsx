@@ -9,10 +9,13 @@ import type { StockList } from "@/lib/types";
 import { recordCount } from "../actions";
 import { StockStatus } from "../status";
 import { StockTabs } from "../tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Stock count" };
 
 export default async function CountPage() {
+  if (!(await can("stock.manage"))) return <NoAccess page="Count" />;
   const { outlet } = await getContext();
   const { items } = await api<StockList>(`/v1/outlets/${outlet.id}/stock`);
   const usable = items.filter((i) => i.active);

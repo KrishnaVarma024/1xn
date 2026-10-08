@@ -7,10 +7,13 @@ import { dateTimeIST, roleLabel } from "@/lib/labels";
 import type { Device } from "@/lib/types";
 import { revokeDevice } from "./actions";
 import { PairForm } from "./pair-form";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Devices" };
 
 export default async function DevicesPage() {
+  if (!(await can("devices"))) return <NoAccess page="Devices" />;
   const fy = fyCode();
   const { outlet } = await getContext();
   const { devices } = await api<{ devices: Device[] }>(`/v1/outlets/${outlet.id}/devices`);

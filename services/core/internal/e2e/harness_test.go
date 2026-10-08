@@ -101,7 +101,7 @@ func run(m *testing.M, adminDSN string) (int, error) {
 	}
 	defer appDB.Close()
 
-	api = httptest.NewServer(app.New(appDB))
+	api = httptest.NewServer(app.New(appDB, app.WithCodeSender(codes)))
 	defer api.Close()
 	return m.Run(), nil
 }

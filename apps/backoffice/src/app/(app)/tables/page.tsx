@@ -5,10 +5,13 @@ import { api } from "@/lib/api";
 import { getContext } from "@/lib/context";
 import type { Menu } from "@/lib/types";
 import { addFloor, addTable, setTableActive } from "./actions";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Tables" };
 
 export default async function TablesPage() {
+  if (!(await can("menu"))) return <NoAccess page="Tables" />;
   const { outlet } = await getContext();
   const menu = await api<Menu>(`/v1/outlets/${outlet.id}/menu`);
   return (

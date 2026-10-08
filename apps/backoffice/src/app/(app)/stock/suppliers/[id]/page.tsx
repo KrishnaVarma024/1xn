@@ -13,10 +13,13 @@ import { formatPhone } from "@/lib/phone";
 import type { Statement } from "@/lib/types";
 import { StockTabs } from "../../tabs";
 import { paySupplier, updateSupplier } from "../actions";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Supplier" };
 
 export default async function SupplierPage({ params, searchParams }: PageProps<"/stock/suppliers/[id]">) {
+  if (!(await can("suppliers"))) return <NoAccess page="Supplier" />;
   const { id } = await params;
   const { paid } = await searchParams;
   if (!isUUID(id)) notFound();
@@ -33,6 +36,7 @@ export default async function SupplierPage({ params, searchParams }: PageProps<"
   const outletName = new Map(me.outlets.map((o) => [o.id, o.name]));
   const lastPayment = lines.find((l) => l.kind === "payment");
   const justPaid = typeof paid === "string" ? lines.find((l) => l.kind === "payment" && l.id === paid) : undefined;
+  const [pay, edit] = [await can("suppliers.pay"), await can("stock.manage")];
 
   return (
     <>
@@ -58,6 +62,8 @@ export default async function SupplierPage({ params, searchParams }: PageProps<"
         <Card title={`Pay ${supplier.name}`}>
           {owed <= 0 ? (
             <p className="text-sm text-ink-soft">Nothing is owed. Deliveries bought on credit show up here to be paid.</p>
+          ) : !pay ? (
+            <p className="text-sm text-ink-soft">{formatPaise(owed)} is owed. Only the owner records payments to suppliers.</p>
           ) : (
             // A new id each time the page renders: a double click pays once.
             <ActionForm action={paySupplier.bind(null, supplier.id, newDocId())} label={`Pay ${supplier.name}`} className="grid gap-3 sm:grid-cols-2">
@@ -84,24 +90,26 @@ export default async function SupplierPage({ params, searchParams }: PageProps<"
           )}
         </Card>
 
-        <Card title="Details">
-          <ActionForm action={updateSupplier.bind(null, supplier.id)} label="Edit supplier" resetOnSuccess={false} className="grid gap-3">
-            <Field label="Name">
-              <Input name="name" defaultValue={supplier.name} required maxLength={100} />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Phone" hint="blank to remove">
-                <Input name="phone" defaultValue={supplier.phone ? formatPhone(supplier.phone) : ""} inputMode="tel" />
+        {edit && (
+          <Card title="Details">
+            <ActionForm action={updateSupplier.bind(null, supplier.id)} label="Edit supplier" resetOnSuccess={false} className="grid gap-3">
+              <Field label="Name">
+                <Input name="name" defaultValue={supplier.name} required maxLength={100} />
               </Field>
-              <Field label="GSTIN" hint="blank to remove">
-                <Input name="gstin" defaultValue={supplier.gstin ?? ""} maxLength={20} />
-              </Field>
-            </div>
-            <div>
-              <SubmitButton variant="secondary">Save</SubmitButton>
-            </div>
-          </ActionForm>
-        </Card>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Phone" hint="blank to remove">
+                  <Input name="phone" defaultValue={supplier.phone ? formatPhone(supplier.phone) : ""} inputMode="tel" />
+                </Field>
+                <Field label="GSTIN" hint="blank to remove">
+                  <Input name="gstin" defaultValue={supplier.gstin ?? ""} maxLength={20} />
+                </Field>
+              </div>
+              <div>
+                <SubmitButton variant="secondary">Save</SubmitButton>
+              </div>
+            </ActionForm>
+          </Card>
+        )}
       </div>
 
       <h2 className="mb-3 text-sm font-semibold">Statement</h2>

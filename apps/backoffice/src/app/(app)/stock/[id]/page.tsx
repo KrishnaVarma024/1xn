@@ -13,10 +13,13 @@ import type { StockItem, StockMove } from "@/lib/types";
 import { addPack, setPackActive, updateStockItem } from "../actions";
 import { StockStatus } from "../status";
 import { StockTabs } from "../tabs";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/access";
 
 export const metadata: Metadata = { title: "Stock item" };
 
 export default async function StockItemPage({ params }: PageProps<"/stock/[id]">) {
+  if (!(await can("stock"))) return <NoAccess page="Stock" />;
   const { id } = await params;
   if (!isUUID(id)) notFound();
   const { outlet } = await getContext();
@@ -28,6 +31,7 @@ export default async function StockItemPage({ params }: PageProps<"/stock/[id]">
     throw err;
   }
   const { item, moves } = res;
+  const manage = await can("stock.manage"); // details and packs can be changed
 
   return (
     <>
@@ -40,26 +44,28 @@ export default async function StockItemPage({ params }: PageProps<"/stock/[id]">
         <Stat label="Last bought at" value={item.last_cost ? `${formatPaise(item.last_cost)}/${perUnit(item.unit)}` : "—"} />
       </div>
 
-      <Card title="Details" className="mb-6">
-        <ActionForm
-          action={updateStockItem.bind(null, item.id, item.unit)}
-          label="Edit stock item"
-          resetOnSuccess={false}
-          className="grid gap-3 sm:grid-cols-[2fr_1fr_auto_auto] sm:items-end"
-        >
-          <Field label="Name">
-            <Input name="name" defaultValue={item.name} required maxLength={100} />
-          </Field>
-          <Field label={`Reorder at (${item.unit === "pc" ? "pieces" : item.unit})`} hint="like 2, or 500 g">
-            <Input name="reorder" defaultValue={item.reorder_level ? qtyToFriendlyInput(item.reorder_level, item.unit) : ""} />
-          </Field>
-          <label className="flex items-center gap-2 pb-2 text-sm">
-            <input type="checkbox" name="active" defaultChecked={item.active} className="h-4 w-4 accent-neel-700" />
-            In use
-          </label>
-          <SubmitButton>Save</SubmitButton>
-        </ActionForm>
-      </Card>
+      {manage && (
+        <Card title="Details" className="mb-6">
+          <ActionForm
+            action={updateStockItem.bind(null, item.id, item.unit)}
+            label="Edit stock item"
+            resetOnSuccess={false}
+            className="grid gap-3 sm:grid-cols-[2fr_1fr_auto_auto] sm:items-end"
+          >
+            <Field label="Name">
+              <Input name="name" defaultValue={item.name} required maxLength={100} />
+            </Field>
+            <Field label={`Reorder at (${item.unit === "pc" ? "pieces" : item.unit})`} hint="like 2, or 500 g">
+              <Input name="reorder" defaultValue={item.reorder_level ? qtyToFriendlyInput(item.reorder_level, item.unit) : ""} />
+            </Field>
+            <label className="flex items-center gap-2 pb-2 text-sm">
+              <input type="checkbox" name="active" defaultChecked={item.active} className="h-4 w-4 accent-neel-700" />
+              In use
+            </label>
+            <SubmitButton>Save</SubmitButton>
+          </ActionForm>
+        </Card>
+      )}
 
       <Card title="Packs" className="mb-6">
         <p className="mb-3 text-sm text-ink-soft">
@@ -74,16 +80,20 @@ export default async function StockItemPage({ params }: PageProps<"/stock/[id]">
                   <span className="font-medium">{p.name}</span> of {formatQty(p.qty, item.unit)}
                   {!p.active && <span className="ml-2"><Badge>Not in use</Badge></span>}
                 </span>
-                <ActionForm action={setPackActive.bind(null, item.id, p.id, !p.active)} label={`${p.active ? "Stop using" : "Use again"} ${p.name}`} resetOnSuccess={false}>
-                  <SubmitButton variant="secondary" size="sm">
-                    {p.active ? "Stop using" : "Use again"}
-                  </SubmitButton>
-                </ActionForm>
+                {manage && (
+                  <ActionForm action={setPackActive.bind(null, item.id, p.id, !p.active)} label={`${p.active ? "Stop using" : "Use again"} ${p.name}`} resetOnSuccess={false}>
+                    <SubmitButton variant="secondary" size="sm">
+                      {p.active ? "Stop using" : "Use again"}
+                    </SubmitButton>
+                  </ActionForm>
+                )}
               </li>
             ))}
           </ul>
         )}
-        {item.active ? (
+        {!manage ? (
+          item.packs.length === 0 && <p className="text-sm text-ink-faint">No packs yet.</p>
+        ) : item.active ? (
           <ActionForm
             action={addPack.bind(null, item.id, item.unit)}
             label="Add a pack"

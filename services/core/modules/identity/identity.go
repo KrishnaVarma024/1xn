@@ -107,7 +107,7 @@ func Signup(ctx context.Context, d *sql.DB, req SignupRequest) (SignupResponse, 
 	res := SignupResponse{
 		TenantID: ids.New(), LegalEntityID: ids.New(), OutletID: ids.New(), OwnerID: ids.New(),
 	}
-	token, hash := auth.NewToken(auth.Owner)
+	token, hash := auth.NewToken(auth.OwnerToken)
 	res.OwnerToken = token
 
 	var gstin any
@@ -196,12 +196,14 @@ func Routes(d *sql.DB) http.Handler {
 	return r
 }
 
-// Me is who the owner is and what they own: the back office's first call.
+// Me is who is signed in, what they may do, and the business's outlets: the
+// back office's first call.
 type Me struct {
-	TenantID     uuid.UUID    `json:"tenant_id"`
-	BusinessName string       `json:"business_name"`
-	User         MeUser       `json:"user"`
-	Outlets      []OutletInfo `json:"outlets"`
+	TenantID     uuid.UUID         `json:"tenant_id"`
+	BusinessName string            `json:"business_name"`
+	User         MeUser            `json:"user"`
+	Permissions  []auth.Permission `json:"permissions"` // what the back office shows this person
+	Outlets      []OutletInfo      `json:"outlets"`
 }
 
 // MeUser is the signed-in person.
@@ -212,11 +214,11 @@ type MeUser struct {
 	Role  string    `json:"role"`
 }
 
-// MeHandler serves GET /v1/me (owner).
+// MeHandler serves GET /v1/me (any signed-in person).
 func MeHandler(d *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := auth.Must(r.Context())
-		me := Me{TenantID: p.TenantID, Outlets: []OutletInfo{}}
+		me := Me{TenantID: p.TenantID, Outlets: []OutletInfo{}, Permissions: auth.PermissionsOf(p.Role)}
 		err := db.InTenantTx(r.Context(), d, p.TenantID, func(tx *sql.Tx) error {
 			if err := tx.QueryRowContext(r.Context(), `SELECT name FROM tenant WHERE id = $1`, p.TenantID).
 				Scan(&me.BusinessName); err != nil {

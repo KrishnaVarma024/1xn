@@ -2,7 +2,7 @@
 
 Restaurant-first operating system for Indian F&B: POS, stock, kitchen, money and people in one product (Petpooja's speed plus Odoo's depth). Architecture and plans live in the project's Claude Docs; this repo is the code.
 
-**Status (8 Oct 2026): P0 foundations, the POS core engine, the restaurant floor, the back office web app, day close, and stock with recipes, suppliers and payables.** A restaurant can sign up, pair a till, publish a menu, sync bills that were priced offline (retries are safe) and see them posted as balanced journal entries. Captains, tills and kitchen screens can now run tables together: orders, KOTs by kitchen section, voids, table moves and merges, split bills, and pull of other devices' changes, all offline-first. Owners run it from a web back office: menu, tables, devices, a live floor, bills, alerts and books. Tills run cash shifts (float, expenses, safe drops, counted cash), and the owner closes each day from its Z report, with drawer differences booked and late bills flagged. Dishes and add-ons have recipes, so every bill uses up its ingredients as it syncs: stock, its value and the day's food cost are always current. Deliveries can be received by the bag or tin, and the owner sees what each supplier is owed and records payments to them. The device app (Flutter) comes next.
+**Status (8 Oct 2026): P0 foundations, the POS core engine, the restaurant floor, the back office web app, day close, stock with recipes, suppliers and payables, and staff sign-in with roles.** A restaurant can sign up, pair a till, publish a menu, sync bills that were priced offline (retries are safe) and see them posted as balanced journal entries. Captains, tills and kitchen screens can now run tables together: orders, KOTs by kitchen section, voids, table moves and merges, split bills, and pull of other devices' changes, all offline-first. Owners run it from a web back office: menu, tables, devices, a live floor, bills, alerts and books. Tills run cash shifts (float, expenses, safe drops, counted cash), and the owner closes each day from its Z report, with drawer differences booked and late bills flagged. Dishes and add-ons have recipes, so every bill uses up its ingredients as it syncs: stock, its value and the day's food cost are always current. Deliveries can be received by the bag or tin, and the owner sees what each supplier is owed and records payments to them. Owners, managers and cashiers sign in with their mobile number and a one-time code, and each sees only what their role allows. The device app (Flutter) comes next.
 
 ## What is built
 
@@ -10,12 +10,12 @@ Restaurant-first operating system for Indian F&B: POS, stock, kitchen, money and
 | --- | --- | --- |
 | GST pricing engine | Integer paise, inclusive/exclusive prices, CGST+SGST or IGST, line and bill discounts split to the paisa, service charge (off by default), round-off. 227 golden cases, 20k random bills, fuzzing | `services/core/modules/sales/pricing` |
 | Tenancy | Postgres Row-Level Security, app role that cannot bypass it, fail-closed tenant context, composite FKs | `migrations/0001_platform.sql`, `internal/platform/db` |
-| Identity | Signup in one transaction, GSTIN check-digit validation, hashed bearer tokens | `modules/identity`, `internal/platform/auth` |
+| Identity | Signup in one transaction, GSTIN check-digit validation, hashed bearer tokens; staff (owner, manager, cashier) sign in with a mobile number and a one-time code (rate-limited, no enumeration), 30-day sessions, roles read on every request; one permission table and a test that every route uses it | `modules/identity`, `internal/platform/auth` |
 | Devices | Pairing codes (single-use, 10 min), a per-device GST invoice series `PPP-FFFF-NNNNNN` | `modules/devices`, `internal/platform/gst` |
 | Catalogue | Tax profiles, categories, items, channel prices, one-tap sold out, kitchen sections, modifier groups, floors and tables, versioned menu with ETag / 304 | `modules/catalogue` |
 | Orders | Tables, lines with modifiers and courses, KOTs per kitchen section, KDS status, voids (with approval or an alert), table moves, merges (with forwarding), late items (spillover order), split bills linked to lines. A pure reducer; conflicts settled by rule, not by refusal | `modules/orders` |
 | Sync pull | Other devices' changes as current order state, by a commit-ordered cursor, paged; bootstrap on first pull | `modules/orders/http.go` |
-| Back office | Next.js web app: sign up / sign in, menu builder (GST rates, categories, kitchen sections, add-ons, dishes, sold out), floors and tables, pair and revoke devices, live floor, order and bill pages, day's bills, day close (Z report, print), stock (items, packs, deliveries, suppliers and payments, wastage, counts, food cost), recipes for dishes and add-ons with costing, alerts, trial balance. The browser never sees the token (httpOnly cookie, BFF) | `apps/backoffice` |
+| Back office | Next.js web app: sign up / sign in with a code (or the owner token), staff and roles, menu builder (GST rates, categories, kitchen sections, add-ons, dishes, sold out), floors and tables, pair and revoke devices, live floor, order and bill pages, day's bills, day close (Z report, print), stock (items, packs, deliveries, suppliers and payments, wastage, counts, food cost), recipes for dishes and add-ons with costing, alerts, trial balance. The browser never sees the token (httpOnly cookie, BFF) | `apps/backoffice` |
 | Day close | Till shifts (float, expenses, safe drops, count with notes and coins), expected cash worked out on the server, differences posted to Cash over and short, the Z report (sales, GST by rate, payments, drawers, invoice gaps, voids, best sellers), a digest-guarded close, late records kept and shown as amendments, a revoked till's shift counted and closed from the back office, change-log pruning with `410` for devices too far behind | `modules/dayclose` |
 | Stock and recipes | Ingredients in kg, litres or pieces (integer milli-units), effective-dated recipes per dish and per add-on, perpetual stock at weighted average cost used up by each bill, purchases (on credit, by bank, from the safe or from a till drawer, matched through a clearing account), wastage, counts, true-ups for stock sold before it was booked in, low and negative stock alerts, recipe costing and daily food cost; packs (a 25 kg bag) on deliveries; suppliers, what each is owed (a subledger of 2100) and payments to them, never more than was owed on their date | `modules/stock` |
 | Demo data | `make seed`: a restaurant with a live evening (3 tables eating, 1 paid, 2 takeaways, a void, one cash shift closed ₹50 short and one open, 18 ingredients with recipes for every dish and add-on, three deliveries (rice and oil by the bag and tin), ₹3,000 paid to the dairy, curd running low) made through the real API | `cmd/seed` |
@@ -49,8 +49,8 @@ Then pick **one** Postgres. Docker is the simplest; use Homebrew only if you alr
 | Terminal | Command | What you see |
 | --- | --- | --- |
 | 1 | `make run` | migrations, then `api listening :8080`. Leave it running. |
-| 2 | `make seed` | a demo restaurant with a live evening; prints its **owner token** |
-| 3 | `make web` | the back office; open **http://localhost:3000** and paste the token |
+| 2 | `make seed` | a demo restaurant with a live evening and two staff; prints its **owner token** and the staff's numbers |
+| 3 | `make web` | the back office; open **http://localhost:3000**: sign in with a mobile number (the code is printed in terminal 1, look for `SIGN-IN CODE`) or paste the token |
 
 Then `make test` (every Go test) and `make test-web` (the back office in a real browser). `make demo` narrates the P0 exit gate against the running API. `make help` lists every command.
 
@@ -69,38 +69,44 @@ When something fails, the command says why and what to run. The usual ones:
 
 ## API (v1, this slice)
 
+"Who" is the least role that may call it ("manager" means managers and the owner; "everyone" includes cashiers): every back-office route names a permission, and `internal/platform/auth/permissions.go` is the one table of which roles (owner, manager, cashier) have which.
+
 | Who | Method and path | Does |
 | --- | --- | --- |
 | anyone | `POST /v1/signup` | tenant + GSTIN + outlet + owner; returns the owner token once |
 | anyone | `POST /v1/devices/register` | redeem a pairing code; returns the device token and invoice series |
-| owner | `GET /v1/me` | the business, the signed-in owner and their outlets |
-| owner | `GET /v1/outlets/{id}/menu` | the outlet's full menu, floors and tables (what its devices get) |
-| owner | `POST /v1/outlets/{id}/pairing-codes` | a code for a new till, captain phone, KDS or hub |
-| owner | `GET /v1/outlets/{id}/devices`, `POST /v1/devices/{id}/revoke` | list devices; cut off a lost one at once |
-| owner | `POST /v1/outlets/{id}/floors`, `/tables`; `PATCH /v1/outlets/{id}/tables/{table}` | lay out the dining room; relabel, resize or switch a table off |
-| owner | `POST /v1/catalogue/tax-profiles`, `/categories`, `/sections`, `/modifier-groups`, `/items` | build the menu and route it to kitchen sections |
-| owner | `PATCH /v1/catalogue/items/{id}` | change a dish: name, price, category, GST, section (`null` clears), add-ons, channel prices |
-| owner | `PATCH /v1/catalogue/items/{id}/availability` | one-tap sold out |
-| owner | `GET /v1/outlets/{id}/orders` | the live floor: every open order |
-| owner | `GET /v1/orders/{id}` | one order with its lines, KOTs and bill links |
-| owner | `GET /v1/bills?outlet_id=&date=` | a business day's bills, totals and payments by method |
-| owner | `GET /v1/bills/{id}` | a bill: lines, taxes, payments, verification and journal lines |
-| owner | `GET /v1/outlets/{id}/days` | the trading day now and the last 60 closed days |
-| owner | `GET /v1/outlets/{id}/days/{date}` | the Z report, live; for a closed day also the closing copy and what changed since |
-| owner | `POST /v1/outlets/{id}/days/{date}/close` | close the day: `{digest, acknowledge_warnings}`; 409 if the figures changed |
-| owner | `GET /v1/outlets/{id}/shifts` | open till shifts, whatever their day, with what each drawer should hold now |
-| owner | `POST /v1/outlets/{id}/shifts/{shift}/close` | count a revoked till's drawer and close its shift: `{id, counted_paise, note}` |
-| owner | `POST /v1/stock/items`, `PATCH /v1/stock/items/{id}` | stock items: name, unit (kg, l, pc), reorder level |
-| owner | `PUT /v1/stock/recipes/{menuItem}`, `/stock/addon-recipes/{option}` | what one portion of a dish, or of an add-on, uses |
-| owner | `POST /v1/stock/items/{id}/packs`, `PATCH /v1/stock/packs/{id}` | packs an item is bought in (`{name, qty}`); switch one off (`{active}`) |
-| owner | `POST /v1/stock/suppliers`, `PATCH /v1/stock/suppliers/{id}` | suppliers: name, phone, GSTIN |
-| owner | `GET /v1/outlets/{id}/stock/suppliers`, `/stock/suppliers/{supplier}` | what each supplier is owed by this outlet's legal entity; one supplier's statement |
+| anyone | `POST /v1/auth/otp`, `/v1/auth/otp/verify`, `/v1/auth/sessions` | sign in: a code to a mobile number, then a ticket, then a 30-day session for the chosen business |
+| person | `POST /v1/auth/sign-out` | end this session |
+| owner | `GET /v1/staff`, `POST /v1/staff`, `PATCH /v1/staff/{id}` | the staff list: add managers and cashiers, change name, number or role, switch off |
+| person | `GET /v1/me` | the business, the signed-in person, their permissions and the outlets |
+| everyone | `GET /v1/outlets/{id}/menu` | the outlet's full menu, floors and tables (what its devices get) |
+| manager | `POST /v1/outlets/{id}/pairing-codes` | a code for a new till, captain phone, KDS or hub |
+| manager | `GET /v1/outlets/{id}/devices`, `POST /v1/devices/{id}/revoke` | list devices; cut off a lost one at once |
+| manager | `POST /v1/outlets/{id}/floors`, `/tables`; `PATCH /v1/outlets/{id}/tables/{table}` | lay out the dining room; relabel, resize or switch a table off |
+| manager | `POST /v1/catalogue/tax-profiles`, `/categories`, `/sections`, `/modifier-groups`, `/items` | build the menu and route it to kitchen sections |
+| manager | `PATCH /v1/catalogue/items/{id}` | change a dish: name, price, category, GST, section (`null` clears), add-ons, channel prices |
+| manager | `PATCH /v1/catalogue/items/{id}/availability` | one-tap sold out |
+| everyone | `GET /v1/outlets/{id}/orders` | the live floor: every open order |
+| everyone | `GET /v1/orders/{id}` | one order with its lines, KOTs and bill links |
+| everyone | `GET /v1/bills?outlet_id=&date=` | a business day's bills, totals and payments by method |
+| everyone | `GET /v1/bills/{id}` | a bill: lines, taxes, payments, verification and journal lines |
+| manager | `GET /v1/outlets/{id}/days` | the trading day now and the last 60 closed days |
+| manager | `GET /v1/outlets/{id}/days/{date}` | the Z report, live; for a closed day also the closing copy and what changed since |
+| manager | `POST /v1/outlets/{id}/days/{date}/close` | close the day: `{digest, acknowledge_warnings}`; 409 if the figures changed |
+| manager | `GET /v1/outlets/{id}/shifts` | open till shifts, whatever their day, with what each drawer should hold now |
+| manager | `POST /v1/outlets/{id}/shifts/{shift}/close` | count a revoked till's drawer and close its shift: `{id, counted_paise, note}` |
+| manager | `POST /v1/stock/items`, `PATCH /v1/stock/items/{id}` | stock items: name, unit (kg, l, pc), reorder level |
+| manager | `PUT /v1/stock/recipes/{menuItem}`, `/stock/addon-recipes/{option}` | what one portion of a dish, or of an add-on, uses |
+| manager | `POST /v1/stock/items/{id}/packs`, `PATCH /v1/stock/packs/{id}` | packs an item is bought in (`{name, qty}`); switch one off (`{active}`) |
+| manager | `POST /v1/stock/suppliers`, `PATCH /v1/stock/suppliers/{id}` | suppliers: name, phone, GSTIN |
+| manager | `GET /v1/outlets/{id}/stock/suppliers`, `/stock/suppliers/{supplier}` | what each supplier is owed by this outlet's legal entity; one supplier's statement |
 | owner | `POST /v1/outlets/{id}/stock/supplier-payments` | pay a supplier: `{id, supplier_id, amount, paid_by: safe/bank/till, date, reference}` |
-| owner | `GET /v1/outlets/{id}/stock`, `/stock/items/{item}` | what the outlet holds and what it is worth; one item's history |
-| owner | `POST /v1/outlets/{id}/stock/purchases`, `/wastage`, `/counts` | stock documents, each with an idempotency id; a purchase line is `{qty}` or `{pack_id, packs}` |
-| owner | `GET /v1/outlets/{id}/stock/recipes`, `/stock/food-cost?from=&to=` | recipe costing; food cost against sales |
+| everyone | `GET /v1/outlets/{id}/stock`, `/stock/items/{item}` | what the outlet holds and what it is worth; one item's history |
+| everyone | `POST /v1/outlets/{id}/stock/purchases`, `/wastage` | stock documents, each with an idempotency id; a purchase line is `{qty}` or `{pack_id, packs}`; paid from the safe or the bank: manager |
+| manager | `POST /v1/outlets/{id}/stock/counts` | a stock count |
+| manager | `GET /v1/outlets/{id}/stock/recipes`, `/stock/food-cost?from=&to=` | recipe costing; food cost against sales |
 | owner | `GET /v1/ledger/trial-balance` | every account's total; `balanced: true` |
-| owner | `GET /v1/alerts` | mismatches, conflicts, gaps, locked periods |
+| manager | `GET /v1/alerts` | mismatches, conflicts, gaps, locked periods |
 | device | `GET /v1/devices/me/menu` | menu snapshot with ETag |
 | device | `POST /v1/sync/push` | up to 200 ops; one ack each. Ops: `bill.settled`, `order.opened`, `order.lines_added`, `kot.fired`, `kot.status_changed`, `order.line_voided`, `order.moved`, `order.merged`, `order.cancelled`, `shift.opened`, `cash.moved`, `shift.closed` |
 | device | `GET /v1/sync/pull?after=N` | orders changed by any device since cursor N (`after=0` bootstraps; `410 cursor_expired` means bootstrap again) |
@@ -138,6 +144,6 @@ When something fails, the command says why and what to run. The usual ones:
 ## Next
 
 1. **Flutter POS (device app):** Dart pricing engine and order reducer passing the shared cases, SQLite op log, table and order screens, KOT and bill print, push and pull sync. Blocked until the sandbox can reach `storage.googleapis.com` and `pub.dev`.
-2. **Staff sign-in:** owners, managers and cashiers log in with their mobile number and a one-time code, each role seeing what it should.
+2. **Sign-in, next steps:** an SMS or WhatsApp provider for codes, per-outlet staff, a platform console for the 1x.n team (separate login, audited, owner-granted access).
 3. **Stock, next steps:** purchase orders from low stock, supplier invoices matched to payments, advances.
 4. **Outlet hub** (LAN relay, so tables keep syncing between devices when the internet is down), push hints instead of polling, outbox relay to NATS JetStream.
